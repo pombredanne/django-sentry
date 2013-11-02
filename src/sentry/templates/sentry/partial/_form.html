@@ -1,0 +1,11 @@
+{% load crispy_forms_tags %}
+{% load i18n %}
+
+<form action="" method="post">
+    {% csrf_token %}
+    {% include "sentry/partial/form_base.html" %}
+
+    <fieldset class="form-actions">
+        <button type="submit" class="btn btn-primary">{% if submit_label %}{{ submit_label }}{% else %}{% trans "Save Changes" %}{% endif %}</button>
+    </fieldset>
+</form>
