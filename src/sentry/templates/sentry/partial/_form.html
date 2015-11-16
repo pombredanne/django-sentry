@@ -3,9 +3,16 @@
 
 <form action="" method="post">
     {% csrf_token %}
+    {% if plugin %}
+    	<input type="hidden" name="plugin" value="{{ plugin.slug }}" />
+    {% endif %}
+
     {% include "sentry/partial/form_base.html" %}
 
     <fieldset class="form-actions">
-        <button type="submit" class="btn btn-primary">{% if submit_label %}{{ submit_label }}{% else %}{% trans "Save Changes" %}{% endif %}</button>
+      {% if plugin.is_testable %}
+      <button type="submit" class="btn btn-default" name="action_test" {% if not plugin_is_configured %}disabled{% endif %}>{% trans "Test Configuration" %}</button>
+      {% endif %}
+        <button type="submit" class="btn btn-primary" name="action_save">{% if submit_label %}{{ submit_label }}{% else %}{% trans "Save Changes" %}{% endif %}</button>
     </fieldset>
 </form>

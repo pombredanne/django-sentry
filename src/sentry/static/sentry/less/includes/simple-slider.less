@@ -1,0 +1,32 @@
+.slider {
+  width: 300px;
+  padding-right: 100px;
+
+  > .dragger {
+    background: lighten(#4593DE, 5%);
+
+    border-radius: 16px;
+    width: 16px;
+    height: 16px;
+    box-shadow: 0 0 0 3px #fff;
+  }
+
+  > .dragger:hover {
+    background: #4593DE;
+  }
+
+  > .track {
+    background: #f1f2f3;
+
+    border-radius: 8px;
+    height: 3px;
+  }
+
+  > .value {
+    top: -1px;
+    position: absolute;
+    right: -100px;
+    width: 80px;
+    color: #999;
+  }
+}

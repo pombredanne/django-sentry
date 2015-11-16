@@ -2,17 +2,17 @@
 sentry.plugins.bases.tag
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
+from __future__ import absolute_import
+
 from sentry.constants import MAX_TAG_VALUE_LENGTH
-from sentry.models import Group
-from sentry.plugins import Plugin
+from sentry.plugins import Plugin2
 
 
-class TagPlugin(Plugin):
+class TagPlugin(Plugin2):
     tag = None
-    tag_label = None
     project_default_enabled = True
 
     def get_tag_values(self, event, **kwargs):
@@ -30,8 +30,3 @@ class TagPlugin(Plugin):
             for v in self.get_tag_values(event)
             if len(v) <= MAX_TAG_VALUE_LENGTH
         ]
-
-    def post_process(self, group, event, is_new, is_sample, **kwargs):
-        # legacy compatibility for older plugins
-        if not hasattr(Plugin, 'get_tags'):
-            Group.objects.add_tags(group, self.get_tags(event))

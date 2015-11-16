@@ -2,12 +2,12 @@
 sentry.plugins.sentry_interface_types.models
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
-import sentry
+from __future__ import absolute_import
 
-from django.utils.translation import ugettext_lazy as _
+import sentry
 
 from sentry.plugins import register
 from sentry.plugins.bases.tag import TagPlugin
@@ -19,7 +19,8 @@ class InterfaceTypePlugin(TagPlugin):
     the class name of each interface (e.g. Http, Stacktrace, Exception).
     """
     descrption = __doc__
-    title = _('Auto Tag: Interface Types')
+    slug = 'interface_types'
+    title = 'Auto Tag: Interface Types'
     version = sentry.VERSION
     author = "Sentry Team"
     author_url = "https://github.com/getsentry/sentry"

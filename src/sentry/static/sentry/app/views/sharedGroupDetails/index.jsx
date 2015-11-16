@@ -1,0 +1,106 @@
+import React from 'react';
+import jQuery from 'jquery';
+import DocumentTitle from 'react-document-title';
+
+import api from '../../api';
+import EventEntries from '../../components/events/eventEntries';
+import Footer from '../../components/footer';
+import Header from '../../components/header';
+import LoadingError from '../../components/loadingError';
+import LoadingIndicator from '../../components/loadingIndicator';
+import PropTypes from '../../proptypes';
+
+import SharedGroupHeader from './sharedGroupHeader';
+
+const SharedGroupDetails = React.createClass({
+
+  childContextTypes: {
+    group: PropTypes.Group,
+  },
+
+  getInitialState() {
+    return {
+      group: null,
+      loading: true,
+      error: false
+    };
+  },
+
+  getChildContext() {
+    return {
+      group: this.state.group,
+    };
+  },
+
+  componentWillMount() {
+    this.fetchData();
+    jQuery(document.body).addClass('shared-group');
+  },
+
+  componentWillUnmount() {
+    jQuery(document.body).removeClass('shared-group');
+  },
+
+  getTitle() {
+    if (this.state.group)
+      return this.state.group.title;
+    return 'Sentry';
+  },
+
+  fetchData() {
+    this.setState({
+      loading: true,
+      error: false
+    });
+
+    api.request(this.getGroupDetailsEndpoint(), {
+      success: (data) => {
+        this.setState({
+          loading: false,
+          group: data
+        });
+      }, error: () => {
+        this.setState({
+          loading: false,
+          error: true
+        });
+      }
+    });
+  },
+
+  getGroupDetailsEndpoint() {
+    let id = this.props.params.shareId;
+
+    return '/shared/groups/' + id + '/';
+  },
+
+  render() {
+    let group = this.state.group;
+
+    if (this.state.loading || !group)
+      return <LoadingIndicator />;
+    else if (this.state.error)
+      return <LoadingError onRetry={this.fetchData} />;
+
+    let evt = this.state.group.latestEvent;
+
+    return (
+      <DocumentTitle title={this.getTitle()}>
+        <div className="app">
+          <Header />
+          <div className="container">
+            <div className="content">
+              <SharedGroupHeader group={group} />
+              <div className="group-overview">
+                <EventEntries group={group} event={evt} isShare={true} />
+              </div>
+            </div>
+          </div>
+          <Footer />
+        </div>
+      </DocumentTitle>
+    );
+  }
+});
+
+export default SharedGroupDetails;

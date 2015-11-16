@@ -2,18 +2,21 @@
 sentry.utils.avatar
 ~~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
+from __future__ import absolute_import
 
-import hashlib
 import urllib
+
+from django.conf import settings
+
+from sentry.utils.hashlib import md5
 
 
 def get_gravatar_url(email, size=None, default='mm'):
-    base = 'https://secure.gravatar.com'
-
-    gravatar_url = "%s/avatar/%s" % (base, hashlib.md5(email.lower()).hexdigest())
+    gravatar_url = "%s/avatar/%s" % (settings.SENTRY_GRAVATAR_BASE_URL,
+                                     md5(email.lower()).hexdigest())
 
     properties = {}
     if size:

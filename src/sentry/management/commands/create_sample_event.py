@@ -1,4 +1,3 @@
-
 """
 sentry.management.commands.create_sample_event
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -6,6 +5,8 @@ sentry.management.commands.create_sample_event
 :copyright: (c) 2012 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
+from __future__ import absolute_import
+
 from django.core.management.base import BaseCommand, CommandError, make_option
 
 
@@ -19,7 +20,6 @@ class Command(BaseCommand):
 
     def handle(self, **options):
         from django.conf import settings
-        from sentry.constants import PLATFORM_LIST
         from sentry.models import Project
         from sentry.utils.samples import create_sample_event
 
@@ -34,10 +34,7 @@ class Command(BaseCommand):
             else:
                 raise CommandError('Project must be specified as team-slug/project-slug or a project id')
 
-        if options['platform'] not in PLATFORM_LIST:
-            raise CommandError('Invalid platform. Must specify one of: %s' % ', '.join(PLATFORM_LIST))
-
-        platform = options['platform'] or project.platform
+        platform = options['platform']
         event = create_sample_event(project, platform)
         if not event:
             raise CommandError('Unable to create an event for platform %r' % (str(platform),))

@@ -1,0 +1,104 @@
+/**
+* Auth Styles
+* ============================================================================
+*/
+
+.auth {
+  h3 {
+    font-size: 24px;
+    margin: 10px 0 30px;
+  }
+
+  .form-actions {
+    margin-top: 20px;
+  }
+}
+
+section.org-login {
+  padding-top: 10px;
+
+  h3 {
+    margin: 0 0 20px;
+  }
+  .org-avatar {
+    .square(56px);
+    border-radius: 3px;
+    margin-bottom: 20px;
+  }
+}
+
+.provider-logo {
+  display: inline-block;
+  .square(16px);
+  vertical-align: text-top;
+  margin-right: 4px;
+  border-radius: 2px;
+  position: relative;
+  top: 1px;
+
+  &.google {
+    background: url(../images/auth-providers/google.png);
+    background-size: cover;
+  }
+
+  &.github {
+    background: url(../images/auth-providers/github.jpg);
+    background-size: cover;
+  }
+
+  &.onelogin {
+    background: url(../images/auth-providers/onelogin.png);
+    background-size: cover;
+  }
+
+  &.okta {
+    background: url(../images/auth-providers/okta.png);
+    background-size: cover;
+  }
+}
+
+// Toggle SSO
+
+.sso-toggle-container {
+  margin-top: 2px;
+  font-size: 15px;
+
+  .go-back {
+    display: none;
+    position: relative;
+  }
+
+  a {
+    color: lighten(@gray, 30);
+
+    &:hover {
+      color: lighten(@gray, 10);
+    }
+  }
+
+  .icon-arrow-left {
+    position: absolute;
+    background: 0;
+    font-size: 18px;
+    left: -20px;
+  }
+}
+
+.show-sso {
+
+  .sso-link {
+    display: none;
+  }
+
+  .go-back {
+    display: block;
+  }
+
+  #standard {
+    display: none;
+  }
+
+  #sso {
+    display: block;
+  }
+}

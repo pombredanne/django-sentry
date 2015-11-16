@@ -1,0 +1,317 @@
+.new-team {
+  font-size: 14px;
+  margin-top: -6px;
+  display: block;
+  padding: 3px 9px 4px 7px;
+  border-radius: 2px;
+
+  .icon-plus {
+    position: relative;
+    top: 2px;
+    font-size: 18px;
+    opacity: .5;
+  }
+}
+
+.organization-home {
+  .count {
+    font-size: 36px;
+    color: lighten(@gray, 10);
+    margin: 20px 0 30px;
+
+    &.rejected {
+      color: @red;
+    }
+  }
+}
+
+/**
+* Team list
+* ============================================================================
+*/
+
+.team-list {
+  list-style: none;
+  padding-left: 0;
+
+  .nav-tabs {
+    li a {
+      padding: 0 0 15px;
+    }
+  }
+
+  .box-header {
+    .actions {
+        a {
+          font-size: 13px;
+          margin-left: 20px;
+          font-weight: bold;
+          padding-top: 7px;
+          display: inline-block;
+          color: lighten(@gray, 15);
+
+          &:hover {
+            color: @gray;
+          }
+        }
+
+        .icon-plus {
+          top: 1px;
+          font-size: 16px;
+        }
+
+        .icon-settings {
+          top: 1px;
+        }
+      }
+
+      a {
+        color: @gray;
+        &:hover {
+          color: darken(@gray, 20);
+        }
+      }
+  }
+
+  .box-content {
+    .clearfix();
+    position: relative;
+
+    .project-list-empty {
+      margin: 20px 0;
+      text-align: center;
+
+      a {
+        color: @linkColor;
+
+        &:hover {
+          color: @linkColorHover;
+        }
+      }
+    }
+  }
+
+  .loading {
+    display: none;
+  }
+}
+
+/**
+* Create team
+* ============================================================================
+*/
+
+.create-flow {
+  .help-block {
+    font-size: 14px;
+    color: @gray;
+    line-height: 1.4;
+    margin-bottom: 20px;
+  }
+
+  .control-group {
+    margin-bottom: 20px;
+  }
+
+  input[type="text"] {
+    box-sizing: border-box;
+    -moz-box-sizing: border-box;
+    width: 100%;
+    margin: 0;
+  }
+
+  .actions {
+    text-align: right;
+    border-top: 2px solid darken(#f1f2f3, 0);
+    padding-top: 30px;
+    margin-top: 10px;
+  }
+
+  .steps {
+    .clearfix();
+    list-style-type: none;
+    padding: 0;
+    margin: 30px 0;
+
+    li {
+      width: 35%;
+      float: left;
+      text-align: center;
+      font-size: 24px;
+      color: lighten(@gray, 35);
+
+      &.active {
+        color: @gray;
+      }
+
+      &:first-child {
+        text-align: left;
+      }
+
+      &:last-child {
+        text-align: right;
+      }
+    }
+  }
+}
+
+/**
+* SSO
+* ============================================================================
+*/
+
+.sso {
+  h3 {
+    margin: 0 0 20px;
+  }
+
+  h4 {
+    margin: 0 0 3px;
+    line-height: 1.2;
+  }
+
+  .simple-list {
+    margin-bottom: 0;
+
+    li {
+      position: relative;
+      border-bottom: 1px solid #f6f7f8;
+      padding: 20px 20px 0 80px;
+
+      &:last-child {
+        border: 0;
+      }
+
+      button {
+        margin-top: 3px;
+      }
+
+      .provider-logo {
+        position: absolute;
+        left: 20px;
+        top: 20px;
+        .square(48px);
+        border-radius: 3px;
+      }
+    }
+  }
+}
+
+// Project list
+table.project-list {
+  border: 0;
+  margin-bottom: 0;
+  font-size: 16px;
+
+  tbody tr {
+    td {
+      border: 0;
+      padding: 15px 20px !important;
+      height: 55px;
+      width: 150px;
+
+      &:first-child {
+        width: auto;
+
+        a {
+          color: @gray-dark;
+        }
+      }
+
+      &.project-chart {
+        width: 250px;
+        .sparkline a {
+          height: 20px;
+        }
+      }
+    }
+
+    &:hover td a {
+      color: @black;
+    }
+  }
+}
+
+/**
+* API Keys
+* ============================================================================
+*/
+
+.api-key-list {
+  h5 a {
+    color: @gray;
+
+    &:hover {
+      color: @gray-dark;
+    }
+  }
+}
+
+.api-key-detail {
+  .scopes {
+    padding-bottom: 20px;
+    .clearfix();
+
+    label {
+      display: block;
+      width: 25%;
+      padding: 0 20px 0 30px;
+      float: left;
+      position: relative;
+
+      &.control-label {
+        font-size: 14px;
+        padding: 0 0 10px;
+        margin-bottom: 20px;
+        display: block;
+        width: 100%;
+        float: none;
+        border-bottom: 1px solid lighten(@trim, 6);
+      }
+    }
+
+    .checkbox, .checkbox + .checkbox {
+      margin: 0 0 15px;
+    }
+
+  }
+}
+
+/**
+* Member list
+* ============================================================================
+*/
+
+.member-list {
+  .status {
+    font-size: 13px;
+  }
+}
+
+/**
+* Stats Column
+* ============================================================================
+*/
+
+.stats-column {
+  padding-left: 30px;
+
+
+
+  .stats-link {
+    display: block;
+    margin-top: -15px;
+    font-size: 85%;
+  }
+}
+
+/**
+* Medium to small screens
+* ============================================================================
+*/
+
+@media(max-width:991px) {
+  .organization-home .col-md-2 {
+    display: none;
+  }
+}

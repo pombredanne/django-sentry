@@ -1,0 +1,1 @@
+You have been granted access to the {{ organization.name }} / {{ team.name }} team on Sentry.

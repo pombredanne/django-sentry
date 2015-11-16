@@ -2,115 +2,202 @@
 
 {% load crispy_forms_tags %}
 {% load i18n %}
+{% load sentry_features %}
 {% load sentry_helpers %}
 {% load sentry_plugins %}
 
-{% block bodyclass %} with-left-sidebar{% endblock %}
+{% block wrapperclass %} {{ block.super }} show-rightbar settings white-bg{% endblock %}
+
+{% block controller %}ManageProjectCtrl{% endblock %}
+
+{% block header_action %}
+  <ul class="nav nav-tabs">
+    <li>
+      <a href="{% url 'sentry-dashboard' project.organization.slug project.slug %}">Dashboard</a>
+    </li>
+    <li>
+      <a href="{% url 'sentry-stream' project.organization.slug project.slug %}">Issues</a>
+    </li>
+    <li>
+      <a href="{% url 'sentry-releases' project.organization.slug project.slug %}">Releases</a>
+    </li>
+    <li class="active">
+      <a href="{% url 'sentry-manage-project' project.organization.slug project.slug %}">Settings</a>
+    </li>
+  </ul>
+{% endblock %}
 
 {% block main %}
-    <section class="body">
-    {% block inner %}
-        <div class="page-header">
-            <h2>{% trans "Project Details" %}</h2>
-        </div>
-        <form class="form-stacked" action="" method="post">
-            {% csrf_token %}
+  <h2>{% trans "Project Settings" %}</h2>
+  <form class="form-stacked" action="" method="post" id="project_settings">
+    {% csrf_token %}
 
-            {{ form|as_crispy_errors }}
+    {{ form|as_crispy_errors }}
 
-            <fieldset>
-                {% for field in form %}
-                    {% if field.name != 'origins' and field.name != 'public' and field.name != 'resolve_age' %}
-                        {{ field|as_crispy_field }}
-                    {% endif %}
-                {% endfor %}
-            </fieldset>
-            <fieldset id="events">
-                <div><legend>{% trans "Event Settings" %}</legend></div>
-                {{ form.resolve_age|as_crispy_field }}
-                {% if form.public %}
-                    {{ form.public|as_crispy_field }}
-                {% endif %}
-            </fieldset>
-            <fieldset id="client-security">
-                <div><legend>{% trans "Client Security" %}</legend></div>
-                {% with form.origins as field %}
-                    <p>{% blocktrans with 'https://github.com/getsentry/raven-js' as link %}Configure origin URLs which Sentry should accept events from. This is used for communication with clients like <a href="{{ link }}">raven-js</a>.{% endblocktrans %}
-                    <p>{% blocktrans %}This will restrict requests based on the <code>Origin</code> and <code>Referer</code> headers.{% endblocktrans %}</p>
-                    {{ field|as_crispy_field }}
-                {% endwith %}
-            </fieldset>
-            <div class="form-actions">
-                <button type="submit" class="btn btn-primary">{% trans "Save Changes" %}</button>
-                {% if not project.is_default_project %}
-                    <a href="{% url 'sentry-remove-project' project.team.slug project.slug %}" class="btn btn-danger">{% trans "Remove Project" %}</a>
-                {% else %}
-                    <p class="pull-right">{% trans "This project cannot be removed. It is used internally by the Sentry server." %}</p>
-                {% endif %}
-            </div>
-        </form>
+    <div class="box">
+      <div class="box-header">
+        <h3>{% trans "Project Details" %}</h3>
+      </div>
+      <div class="box-content with-padding">
+        {{ form.name|as_crispy_field }}
+        {{ form.slug|as_crispy_field }}
+        {{ form.team|as_crispy_field }}
+      </div>
+    </div>
 
-        <script type="text/javascript">
-        new app.ProjectDetailsPage();
-        </script>
-    {% endblock %}
-    </section>
+    <div class="box">
+      <div class="box-header">
+        <h3>{% trans "Event Settings" %}</h3>
+      </div>
+      <div class="box-content with-padding">
+        {{ form.resolve_age|as_crispy_field }}
+        {{ form.scrub_data|as_crispy_field }}
+        {{ form.sensitive_fields|as_crispy_field }}
+        {{ form.scrub_ip_address|as_crispy_field }}
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header">
+        <h3>{% trans "Client Security" %}</h3>
+      </div>
+      <div class="box-content with-padding">
+        {% with form.origins as field %}
+        <p>{% blocktrans with 'https://github.com/getsentry/raven-js' as link %}Configure origin URLs which Sentry should accept events from. This is used for communication with clients like <a href="{{ link }}">raven-js</a>.{% endblocktrans %}
+        <br>
+        {% blocktrans %}This will restrict requests based on the <code>Origin</code> and <code>Referer</code> headers.{% endblocktrans %}</p>
+        {{ field|as_crispy_field }}
+        {% endwith %}
+        {{ form.scrape_javascript|as_crispy_field }}
+        {{ form.token|as_crispy_field }}
+        {{ form.blacklisted_ips|as_crispy_field }}
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header">
+        <h3>{% trans "Remove Project" %}</h3>
+      </div>
+      <div class="box-content with-padding">
+        {% if not ACCESS.project_delete %}
+        <p>{% trans "You do not have the required permission to remove this project." %}</p>
+        {% elif project.is_internal_project %}
+        <p>{% trans "This project cannot be removed. It is used internally by the Sentry server." %}</p>
+        {% else %}
+        <p class="clearfix">
+          <a href="{% url 'sentry-remove-project' project.organization.slug project.slug %}" class="btn btn-danger pull-right">{% trans "Remove Project" %}</a>
+          Remove the <strong>{{ project.slug }}</strong> project and all related data. </br>
+          Careful, this action cannot be undone.
+        </p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary btn-lg">{% trans "Save Changes" %}</button>
+    </div>
+  </form>
+
+  <script>
+  (function(){
+    var formatHours = function(val) {
+      val = parseInt(val, 10);
+      if (val === 0) {
+          return 'Disabled';
+      } else if (val > 23 && val % 24 === 0) {
+          val = (val / 24);
+          return val + ' day' + (val != 1 ? 's' : '');
+      }
+      return val + ' hour' + (val != 1 ? 's' : '');
+    }
+
+    $("input[type=range]").each(function(n, el){
+      var $el = $(el),
+          min = parseInt($el.attr('min'), 10),
+          max = parseInt($el.attr('max'), 10),
+          step = parseInt($el.attr('step'), 10),
+          values = [],
+          $value = $('<span class="value"></span>');
+
+      var i = min;
+      while (i <= max) {
+        values.push(i);
+        if (i < 12) {
+          i += 1;
+        } else if (i < 24) {
+          i += 3;
+        } else if (i < 36) {
+          i += 6;
+        } else if (i < 48) {
+          i += 12;
+        } else {
+          i += 24;
+        }
+      }
+
+      $el.on("slider:ready", function(event, data) {
+        $value.appendTo(data.el);
+        $value.html(formatHours(data.value));
+      }).on("slider:changed", function(event, data) {
+        $value.html(formatHours(data.value));
+      }).simpleSlider({
+        range: [min, max],
+        step: step,
+        allowedValues: values,
+        snap: true
+      });
+    });
+  }());
+  </script>
 {% endblock %}
 
 {% block sidebar %}
-    <ul class="nav nav-list">
-        <li class="nav-header">{% trans "Details" %}</li>
-        <li{% if page == 'details' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-manage-project' project.team.slug project.slug %}">{% trans "Settings" %}</a>
-        </li>
-        <li{% if page == 'notifications' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-project-notifications' project.team.slug project.slug %}">{% trans "Notifications" %}</a>
-        </li>
-        <li{% if page == 'quotas' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-manage-project-quotas' project.team.slug project.slug %}">{% trans "Rate Limits" %}</a>
-        </li>
-        <li{% if page == 'tags' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-manage-project-tags' project.team.slug project.slug %}">{% trans "Tags" %}</a>
-        </li>
-        <li{% if page == 'keys' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-manage-project-keys' project.team.slug project.slug %}">{% trans "API Keys" %}</a>
-        </li>
+  <h6 class="nav-header">{% trans "Configuration" %}</h6>
+  <ul class="nav nav-stacked">
+    <li{% if page == 'details' %} class="active"{% endif %}>
+        <a href="{% url 'sentry-manage-project' project.organization.slug project.slug %}">{% trans "Project Settings" %}</a>
+    </li>
+    <li{% if page == 'notifications' %} class="active"{% endif %}>
+        <a href="{% url 'sentry-project-notifications' project.organization.slug project.slug %}">{% trans "Notifications" %}</a>
+    </li>
+    {% feature projects:quotas project %}
+    <li{% if page == 'quotas' %} class="active"{% endif %}>
+        <a href="{% url 'sentry-manage-project-quotas' project.organization.slug project.slug %}">{% trans "Rate Limits" %}</a>
+    </li>
+    {% endfeature %}
+    <li{% if page == 'rules' %} class="active"{% endif %}>
+        <a href="{% url 'sentry-project-rules' project.organization.slug project.slug %}">{% trans "Rules" %}</a>
+    </li>
+    <li{% if page == 'tags' %} class="active"{% endif %}>
+        <a href="{% url 'sentry-manage-project-tags' project.organization.slug project.slug %}">{% trans "Tags" %}</a>
+    </li>
+    <li{% if page == 'issue-tracking' %} class="active"{% endif %}>
+        <a href="{% url 'sentry-project-issue-tracking' project.organization.slug project.slug %}">{% trans "Issue Tracking" %}</a>
+    </li>
+    <li{% if page == 'release-tracking' %} class="active"{% endif %}>
+        <a href="{% url 'sentry-project-release-tracking' project.organization.slug project.slug %}">{% trans "Release Tracking" %}</a>
+    </li>
+  </ul>
+  <h6 class="nav-header">{% trans "Setup" %}</h6>
+  <ul class="nav nav-stacked">
+    <li>
+        <a href="{% url 'sentry-project-setup' project.organization.slug project.slug %}">{% trans "Instructions" %}</a>
+    </li>
+    <li{% if page == 'keys' %} class="active"{% endif %}>
+        <a href="{% url 'sentry-manage-project-keys' project.organization.slug project.slug %}">{% trans "Client Keys" %}</a>
+    </li>
+  </ul>
+  {% with project|get_plugins as plugins %}
+    <h6 class="nav-header">{% trans "Integrations" %}</h6>
+    <ul class="nav nav-stacked">
+      <li class="{% if page == 'plugins' %} active{% endif %}">
+        <a href="{% url 'sentry-manage-project-plugins' project.organization.slug project.slug %}">{% trans "All Integrations" %}</a>
+      </li>
+    {% for p in plugins %}
+      <li{% if page == 'plugin' and plugin.slug == p.slug %} class="active"{% endif %}>
+          <a href="{% url 'sentry-configure-project-plugin' project.organization.slug project.slug p.slug %}">{{ p.get_title }}</a>
+      </li>
+    {% endfor %}
     </ul>
-    <ul class="nav nav-list">
-        <li class="nav-header">{% trans "Client Configuration" %}</li>
-        <li{% if page == 'client_help' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-project-client-help' project.team.slug project.slug %}">{% trans "All Platforms" %}</a>
-        </li>
-        <li{% if page == 'client_help_javascript' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-docs-client' project.team.slug project.slug "javascript" %}">{% trans "JavaScript" %}</a>
-        </li>
-        <li{% if page == 'client_help_python' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-docs-client' project.team.slug project.slug "python" %}">{% trans "Python" %}</a>
-        </li>
-        <li{% if page == 'client_help_php' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-docs-client' project.team.slug project.slug "php" %}">{% trans "PHP" %}</a>
-        </li>
-        <li{% if page == 'client_help_ruby' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-docs-client' project.team.slug project.slug "ruby" %}">{% trans "Ruby" %}</a>
-        </li>
-        <li{% if page == 'client_help_node.js' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-docs-client' project.team.slug project.slug "node.js" %}">{% trans "Node.js" %}</a>
-        </li>
-        <li{% if page == 'client_help_java' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-docs-client' project.team.slug project.slug "java" %}">{% trans "Java" %}</a>
-        </li>
-    </ul>
-    {% with project|get_plugins as plugins %}
-        <ul class="nav nav-list">
-            <li class="nav-header">{% trans "Integrations" %}</li>
-            <li class="{% if page == 'plugins' %} active{% endif %}">
-                <a href="{% url 'sentry-manage-project-plugins' project.team.slug project.slug %}">{% trans "Manage Integrations" %} ({{ PLUGINS|length }})</a>
-            </li>
-            {% for p in plugins %}
-                <li{% if page == 'plugin' and plugin.slug == p.slug %} class="active"{% endif %}>
-                    <a href="{% url 'sentry-configure-project-plugin' project.team.slug project.slug p.slug %}">{{ p.get_title }}</a>
-                </li>
-            {% endfor %}
-        </ul>
-    {% endwith %}
+  {% endwith %}
 {% endblock %}

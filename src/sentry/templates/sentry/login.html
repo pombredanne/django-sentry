@@ -1,61 +1,77 @@
-{% extends "sentry/bases/modal.html" %}
+{% extends "sentry/bases/auth.html" %}
 
 {% load crispy_forms_tags %}
 {% load i18n %}
 
 {% block title %}{% trans "Login" %} | {{ block.super }}{% endblock %}
 
-{% block main %}
-    <section class="body">
-       {% if next %}
-            <p class="alert alert-info">{% trans "Please login to continue." %}</p>
-        {% endif %}
+{% block auth_main %}
+  <ul class="nav nav-tabs auth-toggle">
+    <li{% if op == "login" %} class="active"{% endif %}>
+      <a href="#login" data-toggle="tab">{% trans "Login" %}</a>
+    </li>
+    {% if CAN_REGISTER %}
+      <li{% if op == "register" %} class="active"{% endif %}>
+        <a href="#register" data-toggle="tab">{% trans "Register" %}</a>
+      </li>
+    {% endif %}
+    <li{% if op == "sso" %} class="active"{% endif %}>
+      <a href="#sso" data-toggle="tab">{% trans "Single Sign-On" %}</a>
+    </li>
+  </ul>
 
-        <div class="row">
-            <div class="span5">
-                <form class="form-stacked" action="" method="post">
-                    {{ form|as_crispy_errors }}
+  <div class="tab-content">
+    <div class="tab-pane{% if op == "login" %} active{% endif %}" id="login">
+      <form class="form-stacked" action="" method="post" autocomplete="off">
+        {% csrf_token %}
 
-                    <fieldset>
-                        <legend>{% trans "Login with your Sentry account" %}</legend>
-                    </fieldset>
-                    {% csrf_token %}
+        <input type="hidden" name="op" value="login" />
 
-                    {% for field in form %}
-                        {{ field|as_crispy_field }}
-                    {% endfor %}
+        {{ login_form|as_crispy_errors }}
 
-                    <fieldset class="form-actions">
-                        {% if CAN_REGISTER %}
-                            <div class="pull-right" style="margin-top: 5px;">
-                                <a href="{% url 'sentry-register' %}">{% trans "Create a new account" %}</a>
-                            </div>
-                        {% endif %}
-                        <button type="submit" class="btn btn-primary">{% trans "Login" %}</button> <a href="{% url 'sentry-account-recover' %}">{% trans "Lose your password?" %}</a>
-                    </fieldset>
-                </form>
-            </div>
-            {% if AUTH_PROVIDERS %}
-                <div class="span5">
-                    <fieldset>
-                        <legend>
-                            {% if SOCIAL_AUTH_CREATE_USERS %}
-                                {% trans "Login or Register using another service" %}
-                            {% else %}
-                                {% trans "Login using another service" %}
-                            {% endif %}
-                    </fieldset>
-                    {% url 'sentry-account-settings-identities' as identities_link %}
-                    <p>{% blocktrans with identities_link as link %}If you already have an account, you can associate a social identity in the
-                        <a href="{{ link }}">identities</a> page in your account settings (after you login).{% endblocktrans %}</p>
-                    <br>
-                    <ul class="auth-options">
-                        {% for engine in AUTH_PROVIDERS %}
-                            <li><a href="{% url 'socialauth_begin' engine %}" class="auth-{{ engine }}">Sign in with {{ engine|title }}</a></li>
-                        {% endfor %}
-                    </ul>
-                </div>
-            {% endif %}
+        {% for field in login_form %}
+          {{ field|as_crispy_field }}
+        {% endfor %}
+
+        <fieldset class="form-actions">
+          <button type="submit" class="btn btn-primary">{% trans "Login" %}</button> <a class="pull-right" style="margin-top: 9px" href="{% url 'sentry-account-recover' %}">{% trans "Lost your password?" %}</a>
+        </fieldset>
+      </form>
+    </div>
+    <div class="tab-pane{% if op == "register" %} active{% endif %}" id="register">
+      <form class="form-stacked" action="" method="post" autocomplete="off">
+        {% csrf_token %}
+
+        <input type="hidden" name="op" value="register" />
+
+        {{ register_form|as_crispy_errors }}
+
+        {% for field in register_form %}
+          {{ field|as_crispy_field }}
+        {% endfor %}
+
+        <fieldset class="form-actions">
+          <button type="submit" class="btn btn-primary">{% trans "Register" %}</button>
+        </fieldset>
+      </form>
+    </div>
+    <div class="tab-pane{% if op == "sso" %} active{% endif %}" id="sso">
+      <form class="form-stacked" method="post">
+        {% csrf_token %}
+
+        <input type="hidden" name="op" value="sso" />
+
+        <div class="control-group">
+          <div class="controls">
+            <label style="display: block">SSO URL</label>
+            <span style="padding: 7px 0; font-size: 15px">app.getsentry.com/</span> <input style="width: 240px; margin: 0 0 4px; padding: 5px 8px; display: inline" type="text" class="form-control" name="organization" placeholder="acme">
+            <p class="help-block">Enter your organization's ID and we'll get things started.</p>
+          </div>
         </div>
-    </section>
+        <div class="form-actions" style="margin-top: 25px">
+          <button class="btn btn-primary">Sign in</button>
+        </div>
+      </form>
+    </div>
+  </div>
 {% endblock %}

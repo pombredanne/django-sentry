@@ -2,60 +2,25 @@
 sentry.web.helpers
 ~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
+from __future__ import absolute_import, print_function
 
 import logging
-import warnings
 
 from django.conf import settings
+from django.contrib.auth.models import AnonymousUser
 from django.core.urlresolvers import reverse, resolve
 from django.http import HttpResponse
 from django.template import loader, RequestContext, Context
-from django.utils.datastructures import SortedDict
-from django.utils.safestring import mark_safe
 
-from sentry.constants import MEMBER_OWNER, EVENTS_PER_PAGE, STATUS_HIDDEN
-from sentry.models import Project, Team, Option, ProjectOption, ProjectKey
+from sentry.api.serializers.base import serialize
+from sentry.auth import access
+from sentry.constants import EVENTS_PER_PAGE
+from sentry.models import Team
 
-logger = logging.getLogger('sentry.errors')
-
-
-def get_project_list(user=None, access=None, hidden=False, key='id', team=None):
-    warnings.warn('get_project_list is Deprecated. Use Project.objects.get_for_user instead.', DeprecationWarning)
-    return SortedDict(
-        (getattr(p, key), p)
-        for p in Project.objects.get_for_user(user, access)
-    )
-
-
-def group_is_public(group, user):
-    """
-    Return ``True`` if the this group if the user viewing it should see a restricted view.
-
-    This check should be used in combination with project membership checks, as we're only
-    verifying if the user should have a restricted view of something they already have access
-    to.
-    """
-    # if the group isn't public, this check doesn't matter
-    if not group.is_public:
-        return False
-    # anonymous users always are viewing as if it were public
-    if not user.is_authenticated():
-        return True
-    # superusers can always view events
-    if user.is_superuser:
-        return False
-    # project owners can view events
-    if group.project in get_project_list(user).values():
-        return False
-    return True
-
-
-def get_team_list(user, access=None):
-    warnings.warn('get_team_list is Deprecated. Use Team.objects.get_for_user instead.', DeprecationWarning)
-    return Team.objects.get_for_user(user, access)
+logger = logging.getLogger('sentry')
 
 
 _LOGIN_URL = None
@@ -79,56 +44,63 @@ def get_login_url(reset=False):
     return _LOGIN_URL
 
 
-def get_internal_project():
-    try:
-        project = Project.objects.get(id=settings.SENTRY_PROJECT)
-    except Project.DoesNotExist:
-        return {}
-    try:
-        projectkey = ProjectKey.objects.filter(project=project).order_by('-user')[0]
-    except IndexError:
-        return {}
-
-    return {
-        'id': project.id,
-        'dsn': projectkey.get_dsn(public=True)
-    }
-
-
 def get_default_context(request, existing_context=None, team=None):
     from sentry.plugins import plugins
 
     context = {
-        'HAS_SEARCH': settings.SENTRY_USE_SEARCH,
         'EVENTS_PER_PAGE': EVENTS_PER_PAGE,
         'URL_PREFIX': settings.SENTRY_URL_PREFIX,
+        'SINGLE_ORGANIZATION': settings.SENTRY_SINGLE_ORGANIZATION,
         'PLUGINS': plugins,
-        'STATUS_HIDDEN': STATUS_HIDDEN,
+        'ALLOWED_HOSTS': settings.ALLOWED_HOSTS,
     }
 
-    if request:
-        if existing_context and not team and 'team' in existing_context:
+    if existing_context:
+        if team is None and 'team' in existing_context:
             team = existing_context['team']
 
+        if 'project' in existing_context:
+            project = existing_context['project']
+        else:
+            project = None
+    else:
+        project = None
+
+    if team:
+        organization = team.organization
+    elif project:
+        organization = project.organization
+    else:
+        organization = None
+
+    if request:
         context.update({
             'request': request,
         })
-        if team:
-            # TODO: remove this extra query
-            context.update({
-                'can_admin_team': [team in Team.objects.get_for_user(request.user, MEMBER_OWNER)],
-            })
 
-        if not existing_context or 'TEAM_LIST' not in existing_context:
+        if (not existing_context or 'TEAM_LIST' not in existing_context) and team:
             context['TEAM_LIST'] = Team.objects.get_for_user(
-                request.user, with_projects=True).values()
+                organization=team.organization,
+                user=request.user,
+                with_projects=True,
+            )
 
-        if not existing_context or 'PROJECT_LIST' not in existing_context:
-            # HACK:
-            for t, p_list in context['TEAM_LIST']:
-                if t == team:
-                    context['PROJECT_LIST'] = p_list
-                    break
+        user = request.user
+    else:
+        user = AnonymousUser()
+
+    if organization:
+        context['selectedOrganization'] = serialize(organization, user)
+    if team:
+        context['selectedTeam'] = serialize(team, user)
+    if project:
+        context['selectedProject'] = serialize(project, user)
+
+    if not existing_context or 'ACCESS' not in existing_context:
+        context['ACCESS'] = access.from_user(
+            user=user,
+            organization=organization,
+        ).to_django_context()
 
     return context
 
@@ -157,63 +129,9 @@ def render_to_string(template, context=None, request=None):
     return loader.render_to_string(template, context)
 
 
-def render_to_response(template, context=None, request=None, status=200):
+def render_to_response(template, context=None, request=None, status=200,
+                       content_type='text/html'):
     response = HttpResponse(render_to_string(template, context, request))
     response.status_code = status
-
+    response['Content-Type'] = content_type
     return response
-
-
-def plugin_config(plugin, project, request):
-    """
-    Configure the plugin site wide.
-
-    Returns a tuple composed of a redirection boolean and the content to
-    be displayed.
-    """
-    NOTSET = object()
-
-    plugin_key = plugin.get_conf_key()
-    if project:
-        form_class = plugin.project_conf_form
-        template = plugin.project_conf_template
-    else:
-        form_class = plugin.site_conf_form
-        template = plugin.site_conf_template
-
-    initials = plugin.get_form_initial(project)
-    for field in form_class.base_fields:
-        key = '%s:%s' % (plugin_key, field)
-        if project:
-            value = ProjectOption.objects.get_value(project, key, NOTSET)
-        else:
-            value = Option.objects.get_value(key, NOTSET)
-        if value is not NOTSET:
-            initials[field] = value
-
-    form = form_class(
-        request.POST or None,
-        initial=initials,
-        prefix=plugin_key
-    )
-    if form.is_valid():
-        for field, value in form.cleaned_data.iteritems():
-            key = '%s:%s' % (plugin_key, field)
-            if project:
-                ProjectOption.objects.set_value(project, key, value)
-            else:
-                Option.objects.set_value(key, value)
-
-        return ('redirect', None)
-
-    from django.template.loader import render_to_string
-    return ('display', mark_safe(render_to_string(template, {
-        'form': form,
-        'request': request,
-        'plugin': plugin,
-        'plugin_description': plugin.get_description() or '',
-    }, context_instance=RequestContext(request))))
-
-
-def get_raven_js_url():
-    return settings.SENTRY_RAVEN_JS_URL

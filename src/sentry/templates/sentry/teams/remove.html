@@ -1,4 +1,4 @@
-{% extends "sentry/teams/manage.html" %}
+{% extends "sentry/bases/modal.html" %}
 
 {% load crispy_forms_tags %}
 {% load i18n %}
@@ -6,17 +6,36 @@
 {% block title %}{% trans "Remove Team" %} | {{ block.super }}{% endblock %}
 
 {% block main %}
-    <section class="body">
-        <form action="" method="post">
-            <p>{% trans "Are you sure you wish to remove this team? This change is permanent!" %}</p>
-            {% csrf_token %}
-            {{ form|as_crispy_errors }}
-            {% for field in form %}
-                {{ field|as_crispy_field }}
-            {% endfor %}
-            <fieldset class="form-actions">
-                <button type="submit" class="btn btn-danger">{% trans "Confirm" %}</button> <a href="{% url 'sentry-manage-team' team.slug %}" class="btn">{% trans "Cancel" %}</a>
-            </fieldset>
-        </form>
-    </section>
+  <div class="page-header">
+    <h2>
+      {% trans "Remove Team" %}
+      <small>{{ team.name }}</small>
+    </h2>
+  </div>
+  <form action="" method="post">
+    {% csrf_token %}
+
+    <p><strong>{% trans "Removing this team is permanent and cannot be undone!" %}</strong></p>
+
+    {% if project_list %}
+      <p>{% trans "This will also remove all associated projects and events:" %}</p>
+
+      <ul>
+        {% for project in project_list %}
+          <li>{{ project.name }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {{ form|as_crispy_errors }}
+
+    {% for field in form %}
+      {{ field|as_crispy_field }}
+    {% endfor %}
+
+    <fieldset class="form-actions">
+      <button type="submit" class="btn btn-danger">{% trans "Remove Team" %}</button>
+      <a href="{% url 'sentry-manage-team' organization.slug team.slug %}" class="btn btn-default">{% trans "Cancel" %}</a>
+    </fieldset>
+  </form>
 {% endblock %}

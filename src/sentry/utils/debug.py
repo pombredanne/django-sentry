@@ -5,6 +5,7 @@ sentry.utils.debug
 :copyright: (c) 2012 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
+from __future__ import absolute_import
 
 import cProfile
 import re
@@ -14,6 +15,8 @@ import StringIO
 
 from django.conf import settings
 from django.http import HttpResponse
+
+from sentry.auth.utils import is_active_superuser
 
 words_re = re.compile(r'\s+')
 
@@ -30,7 +33,7 @@ class ProfileMiddleware(object):
             return False
         if settings.DEBUG:
             return True
-        if hasattr(request, 'user') and request.user.is_superuser:
+        if hasattr(request, 'user') and is_active_superuser(request.user):
             return True
         return False
 
@@ -117,12 +120,12 @@ class ProfileMiddleware(object):
                 total += time
                 filename = fields[6].split(":")[0]
 
-                if not filename in mystats:
+                if filename not in mystats:
                     mystats[filename] = 0
                 mystats[filename] += time
 
                 group = self.get_group(filename)
-                if not group in mygroups:
+                if group not in mygroups:
                     mygroups[group] = 0
                 mygroups[group] += time
 

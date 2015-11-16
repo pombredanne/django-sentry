@@ -1,0 +1,9 @@
+{% extends "sentry/emails/base.html" %}
+
+{% load i18n %}
+
+{% block main %}
+  <p>SSO has been configured for the <strong>{{ organization_name }}</strong> organization.</p>
+
+  <p>We'll need you to link your existing account with the SSO provider by visiting the following url: {{ url }}</p>
+{% endblock %}

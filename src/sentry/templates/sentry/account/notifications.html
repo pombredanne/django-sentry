@@ -6,7 +6,7 @@
 
 {% block title %}{% trans "Notification Settings" %} | {{ block.super }}{% endblock %}
 
-{% block inner %}
+{% block main %}
     <style type="text/css">
     table label,
     table input[type=checkbox] {
@@ -19,22 +19,6 @@
         padding-bottom: 10px;
     }
     </style>
-    <script>
-    $(function(){
-        $('form a[data-toggle=change-target-value]').click(function(){
-            var $this = $(this);
-            var $target = $('#' + $this.data('target'));
-            var result = window.prompt('Enter an email address', $target.val());
-            $target.val(result || '');
-            if (result !== null) {
-                $this.text(result);
-            } else {
-                $this.html('<em>default</em>');
-            }
-        })
-    });
-    </script>
-
     <form action="" method="post">
         {% csrf_token %}
 
@@ -44,49 +28,51 @@
 
         {% with settings_form as form %}
             <fieldset>
-                <div><legend>{% trans "General" %}</legend></div>
+                <h4>{% trans "General" %}</legend></h4>
                 {% include "sentry/partial/form_base.html" %}
             </fieldset>
         {% endwith %}
 
         {% if project_forms %}
-            <fieldset>
-                <div><legend>{% trans "Mail" %}</legend></div>
-                <p>{% blocktrans %}Choose which projects you wish to receive email notifications for, as well as an alternative email address to send to.{% endblocktrans %}</p>
-                <p><small>{% blocktrans %}Note: You will never receive notifications if a project has them disabled (via the Project settings){% endblocktrans %}</small></p>
+            <h4>{% trans "Mail" %}</h4>
+            <p>{% blocktrans %}Choose which projects you wish to receive email notifications for, as well as an alternative email address to send to.{% endblocktrans %}</p>
+            <p><small>{% blocktrans %}Note: You will never receive notifications if a project has them disabled (via the Project settings){% endblocktrans %}</small></p>
 
-                {% for project, form in project_forms %}
-                    {{ form|as_crispy_errors }}
-                {% endfor %}
-                {% for project, form in project_forms %}
-                    {% ifchanged project.team %}
-                        {% if not forloop.first %}
-                            </table>
-                        {% endif %}
-                        <table class="table table-bordered table-striped">
-                            <caption>{{ project.team.name }}</caption>
+            {% for project, form in project_forms %}
+                {{ form|as_crispy_errors }}
+            {% endfor %}
+            {% for project, form in project_forms %}
+                {% ifchanged project.team %}
+                    {% if not forloop.first %}
+                        </table>
+                    {% endif %}
+                    <h4>{{ project.team.name }}</h4>
 
-                            <thead>
-                                <tr>
-                                    <th style="width:5px"><input type="checkbox" onclick="$('tbody input[type=checkbox]', $(this).parents('table')).attr('checked', this.checked)"></th>
-                                    <th>{% trans "Project Name" %}</th>
-                                    <th style="width:100px;overflow:hidden;text-align:right">
-                                        {% trans "Email Address" %}</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                    {% endifchanged %}
-                    <tr>
-                        <td>{{ form.alert }}</td>
-                        <td><label for="{{ form.alert.auto_id }}">{{ project.name }}</label></td>
-                        <td style="text-align:right">
-                            <a href="javascript:void(0)" data-target="{{ form.email.auto_id }}" data-toggle="change-target-value">{% if form.email.value %}{{ form.email.value }}{% else %}<em>default</em>{% endif %}</a>
-                            {{ form.email }}
-                        </td>
-                    </tr>
-                {% endfor %}
-                </tbody></table>
-            </fieldset>
+                    <table class="table table-bordered table-striped" style="margin-bottom: 20px">
+                        <thead>
+                            <tr>
+                                <th style="width:31px">
+                                    <input type="checkbox" data-action="check-all-projects">
+                                </th>
+                                <th>{% trans "Project Name" %}</th>
+                                <th style="width:150px;overflow:hidden;text-align:right">
+                                    {% trans "Email Address" %}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                {% endifchanged %}
+                <tr>
+                    <td>{{ form.alert }}</td>
+                    <td><label for="{{ form.alert.auto_id }}">{{ project.name }}</label></td>
+                    <td style="text-align:right">
+                        <a href="javascript:void(0)" data-target="{{ form.email.auto_id }}" data-toggle="change-target-value">
+                            {% if form.email.value %}{{ form.email.value }}{% else %}<em>Default</em>{% endif %}
+                        </a>
+                        {{ form.email }}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody></table>
         {% endif %}
 
         {% for form in ext_forms %}
@@ -105,4 +91,22 @@
             <button type="submit" class="btn btn-primary">{% trans "Save Changes" %}</button>
         </fieldset>
     </form>
+    <script>
+    $(function(){
+        $('form a[data-toggle="change-target-value"]').click(function(){
+            var $this = $(this);
+            var $target = $('#' + $this.data('target'));
+            var result = window.prompt('Enter an email address', $target.val());
+            $target.val(result || '');
+            if (result) {
+                $this.text(result);
+            } else {
+                $this.html('<em>Default</em>');
+            }
+        });
+        $('input[data-action="check-all-projects"]').click(function(){
+            $(this).parents('table').find('tbody input[type=checkbox]').prop('checked', $(this).prop('checked'))
+        });
+    });
+    </script>
 {% endblock %}

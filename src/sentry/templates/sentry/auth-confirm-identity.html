@@ -1,0 +1,21 @@
+{% extends "sentry/bases/auth.html" %}
+
+{% load crispy_forms_tags %}
+{% load i18n %}
+{% load sentry_helpers %}
+
+{% block title %}{% trans "Confirm Identity" %} | {{ block.super }}{% endblock %}
+
+{% block auth_main %}
+  <form class="form-stacked" action="" method="post">
+    {% csrf_token %}
+
+    <img src="{% gravatar_url identity.email size 36 %}" class="merge-avatar avatar">
+
+    <div class="align-center">
+      <p>We've identified you as {{ identity.email }}. If everything sounds good, we'll go ahead and create a new account for you with this email address.</p>
+
+      <p><button class="btn btn-primary" type="submit" name="op" value="newuser">Continue</button></p>
+    </div>
+  </form>
+{% endblock %}

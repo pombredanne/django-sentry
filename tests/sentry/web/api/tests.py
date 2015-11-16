@@ -3,32 +3,79 @@
 from __future__ import absolute_import
 
 import mock
+
 from django.core.urlresolvers import reverse
-from sentry.models import Team, Project, TeamMember, AccessGroup, User
-from sentry.testutils import TestCase, fixture, before
+from exam import fixture
+
+from sentry.models import ProjectKey
+from sentry.testutils import TestCase
 from sentry.utils import json
+
+
+class CspReportViewTest(TestCase):
+    @fixture
+    def path(self):
+        path = reverse('sentry-api-csp-report', kwargs={'project_id': self.project.id})
+        return path + '?sentry_key=%s&sentry_version=5' % self.projectkey.public_key
+
+    def test_get_response(self):
+        resp = self.client.get(self.path)
+        assert resp.status_code == 405, resp.content
+
+    def test_invalid_content_type(self):
+        resp = self.client.post(self.path, content_type='text/plain')
+        assert resp.status_code == 400, resp.content
+
+    def test_missing_csp_report(self):
+        resp = self.client.post(self.path,
+            content_type='application/csp-report',
+            data='{"lol":1}',
+            HTTP_USER_AGENT='awesome',
+        )
+        assert resp.status_code == 400, resp.content
+
+    @mock.patch('sentry.utils.http.get_origins')
+    def test_bad_origin(self, get_origins):
+        get_origins.return_value = ['example.com']
+        resp = self.client.post(self.path,
+            content_type='application/csp-report',
+            data='{"csp-report":{"document-uri":"http://lolnope.com"}}',
+            HTTP_USER_AGENT='awesome',
+        )
+        assert resp.status_code == 403, resp.content
+
+        get_origins.return_value = ['*']
+        resp = self.client.post(self.path,
+            content_type='application/csp-report',
+            data='{"csp-report":{"document-uri":"about:blank"}}',
+            HTTP_USER_AGENT='awesome',
+        )
+        assert resp.status_code == 403, resp.content
+
+    @mock.patch('sentry.web.api.is_valid_origin', mock.Mock(return_value=True))
+    @mock.patch('sentry.web.api.CspReportView.process')
+    def test_post_success(self, process):
+        process.return_value = 'ok'
+        resp = self._postCspWithHeader({'csp-report': {'document-uri': 'http://example.com'}})
+        assert resp.status_code == 201, resp.content
 
 
 class StoreViewTest(TestCase):
     @fixture
-    def project(self):
-        return Project.objects.create(name='foo', slug='foo')
-
-    @fixture
     def path(self):
-        return reverse('sentry-api-store', kwargs={'project_id': self.project.slug})
+        return reverse('sentry-api-store', kwargs={'project_id': self.project.id})
 
     @mock.patch('sentry.web.api.StoreView._parse_header')
-    @mock.patch('sentry.web.api.project_from_auth_vars')
-    def test_options_response(self, project_from_auth_vars, parse_header):
+    def test_options_response(self, parse_header):
+        project = self.create_project()
+        pk = ProjectKey.objects.get_or_create(project=project)[0]
         parse_header.return_value = {
-            'sentry_project': self.project.id,
-            'sentry_key': 'a' * 40,
+            'sentry_project': project.id,
+            'sentry_key': pk.public_key,
             'sentry_version': '2.0',
         }
-        project_from_auth_vars.return_value = (self.project, None)
         resp = self.client.options(self.path)
-        self.assertEquals(resp.status_code, 200)
+        assert resp.status_code == 200, resp.content
         self.assertIn('Allow', resp)
         self.assertEquals(resp['Allow'], 'GET, POST, HEAD, OPTIONS')
         self.assertIn('Content-Length', resp)
@@ -37,53 +84,73 @@ class StoreViewTest(TestCase):
     @mock.patch('sentry.web.api.is_valid_origin', mock.Mock(return_value=False))
     def test_options_response_with_invalid_origin(self):
         resp = self.client.options(self.path, HTTP_ORIGIN='http://foo.com')
-        self.assertEquals(resp.status_code, 400)
+        assert resp.status_code == 403, resp.content
         self.assertIn('Access-Control-Allow-Origin', resp)
         self.assertEquals(resp['Access-Control-Allow-Origin'], '*')
         self.assertIn('X-Sentry-Error', resp)
-        self.assertEquals(resp['X-Sentry-Error'], "Invalid origin: 'http://foo.com'")
-        self.assertEquals(resp.content, resp['X-Sentry-Error'])
+        assert resp['X-Sentry-Error'] == "Invalid origin: http://foo.com"
+        assert json.loads(resp.content)['error'] == resp['X-Sentry-Error']
 
     @mock.patch('sentry.web.api.is_valid_origin', mock.Mock(return_value=False))
     def test_options_response_with_invalid_referrer(self):
         resp = self.client.options(self.path, HTTP_REFERER='http://foo.com')
-        self.assertEquals(resp.status_code, 400)
+        assert resp.status_code == 403, resp.content
         self.assertIn('Access-Control-Allow-Origin', resp)
         self.assertEquals(resp['Access-Control-Allow-Origin'], '*')
         self.assertIn('X-Sentry-Error', resp)
-        self.assertEquals(resp['X-Sentry-Error'], "Invalid origin: 'http://foo.com'")
-        self.assertEquals(resp.content, resp['X-Sentry-Error'])
+        assert resp['X-Sentry-Error'] == "Invalid origin: http://foo.com"
+        assert json.loads(resp.content)['error'] == resp['X-Sentry-Error']
 
     @mock.patch('sentry.web.api.is_valid_origin', mock.Mock(return_value=True))
     def test_options_response_with_valid_origin(self):
         resp = self.client.options(self.path, HTTP_ORIGIN='http://foo.com')
-        self.assertEquals(resp.status_code, 200)
+        assert resp.status_code == 200, resp.content
         self.assertIn('Access-Control-Allow-Origin', resp)
         self.assertEquals(resp['Access-Control-Allow-Origin'], 'http://foo.com')
 
     @mock.patch('sentry.web.api.is_valid_origin', mock.Mock(return_value=True))
     def test_options_response_with_valid_referrer(self):
         resp = self.client.options(self.path, HTTP_REFERER='http://foo.com')
-        self.assertEquals(resp.status_code, 200)
+        assert resp.status_code == 200, resp.content
         self.assertIn('Access-Control-Allow-Origin', resp)
         self.assertEquals(resp['Access-Control-Allow-Origin'], 'http://foo.com')
+
+    @mock.patch('sentry.web.api.is_valid_ip', mock.Mock(return_value=False))
+    def test_request_with_backlisted_ip(self):
+        resp = self._postWithHeader({})
+        assert resp.status_code == 403, resp.content
+
+    @mock.patch('sentry.coreapi.ClientApiHelper.insert_data_to_database')
+    def test_scrubs_ip_address(self, mock_insert_data_to_database):
+        self.project.update_option('sentry:scrub_ip_address', True)
+        body = {
+            "message": "foo bar",
+            "sentry.interfaces.User": {"ip_address": "127.0.0.1"},
+            "sentry.interfaces.Http": {
+                "method": "GET",
+                "url": "http://example.com/",
+                "env": {"REMOTE_ADDR": "127.0.0.1"}
+            },
+        }
+        resp = self._postWithHeader(body)
+        assert resp.status_code == 200, resp.content
+
+        call_data = mock_insert_data_to_database.call_args[0][0]
+        assert not call_data['sentry.interfaces.User'].get('ip_address')
+        assert not call_data['sentry.interfaces.Http']['env'].get('REMOTE_ADDR')
 
 
 class CrossDomainXmlTest(TestCase):
     @fixture
-    def project(self):
-        return Project.objects.create(name='foo', slug='foo', public=True)
-
-    @fixture
     def path(self):
-        return reverse('sentry-api-crossdomain-xml', kwargs={'project_id': self.project.slug})
+        return reverse('sentry-api-crossdomain-xml', kwargs={'project_id': self.project.id})
 
     @mock.patch('sentry.web.api.get_origins')
     def test_output_with_global(self, get_origins):
         get_origins.return_value = '*'
         resp = self.client.get(self.path)
         get_origins.assert_called_once_with(self.project)
-        self.assertEquals(resp.status_code, 200)
+        assert resp.status_code == 200, resp.content
         self.assertEquals(resp['Content-Type'], 'application/xml')
         self.assertTemplateUsed(resp, 'sentry/crossdomain.xml')
         assert '<allow-access-from domain="*" secure="false" />' in resp.content
@@ -130,98 +197,12 @@ class CrossDomainXmlIndexTest(TestCase):
         assert '<site-control permitted-cross-domain-policies="all" />' in resp.content
 
 
-class SearchUsersTest(TestCase):
+class RobotsTxtTest(TestCase):
     @fixture
     def path(self):
-        return reverse('sentry-api-search-users', args=[self.team.slug])
+        return reverse('sentry-api-robots-txt')
 
-    @before
-    def login_user(self):
-        self.login()
-
-    def test_finds_users_from_team_members(self):
-        otheruser = User.objects.create(first_name='Bob Ross', username='bobross', email='bob@example.com')
-        TeamMember.objects.create(team=self.team, user=otheruser)
-
-        resp = self.client.get(self.path, {'query': 'bob'})
-
+    def test_robots(self):
+        resp = self.client.get(self.path)
         assert resp.status_code == 200
-        assert resp['Content-Type'] == 'application/json'
-        assert json.loads(resp.content) == {
-            'results': [{
-                'id': otheruser.id,
-                'first_name': otheruser.first_name,
-                'username': otheruser.username,
-                'email': otheruser.email,
-            }],
-            'query': 'bob',
-        }
-
-    def test_finds_users_from_access_group_members(self):
-        otheruser = User.objects.create(first_name='Bob Ross', username='bobross', email='bob@example.com')
-        group = AccessGroup.objects.create(team=self.team, name='Test')
-        group.members.add(otheruser)
-
-        resp = self.client.get(self.path, {'query': 'bob'})
-
-        assert resp.status_code == 200
-        assert resp['Content-Type'] == 'application/json'
-        assert json.loads(resp.content) == {
-            'results': [{
-                'id': otheruser.id,
-                'first_name': otheruser.first_name,
-                'username': otheruser.username,
-                'email': otheruser.email,
-            }],
-            'query': 'bob',
-        }
-
-    def test_does_not_include_users_who_are_not_members(self):
-        User.objects.create(first_name='Bob Ross', username='bobross', email='bob@example.com')
-
-        resp = self.client.get(self.path, {'query': 'bob'})
-
-        assert resp.status_code == 200
-        assert resp['Content-Type'] == 'application/json'
-        assert json.loads(resp.content) == {
-            'results': [],
-            'query': 'bob',
-        }
-
-
-class SearchProjectsTest(TestCase):
-    @fixture
-    def path(self):
-        return reverse('sentry-api-search-projects', args=[self.team.slug])
-
-    @before
-    def login_user(self):
-        self.login()
-
-    def test_finds_projects_from_team(self):
-        project = Project.objects.create(team=self.team, name='Sample')
-        resp = self.client.get(self.path, {'query': 'sample'})
-
-        assert resp.status_code == 200
-        assert resp['Content-Type'] == 'application/json'
-        assert json.loads(resp.content) == {
-            'results': [{
-                'id': project.id,
-                'slug': project.slug,
-                'name': project.name,
-            }],
-            'query': 'sample',
-        }
-
-    def test_does_not_include_projects_from_other_teams(self):
-        team = Team.objects.create(owner=self.user, name='Sample')
-        Project.objects.create(team=team, name='Sample')
-
-        resp = self.client.get(self.path, {'query': 'sample'})
-
-        assert resp.status_code == 200
-        assert resp['Content-Type'] == 'application/json'
-        assert json.loads(resp.content) == {
-            'results': [],
-            'query': 'sample',
-        }
+        assert resp['Content-Type'] == 'text/plain'

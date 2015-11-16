@@ -9,10 +9,12 @@ Details
 
 {{ link }}
 
-Logger: {{ event.logger }}
-First Seen: {{ group.first_seen|date }}
+Tags
+----
+{% for tag_key, tag_value in tags %}
+* {{ tag_key }} = {{ tag_value }}{% endfor %}
 
-{% if interfaces %}{% for label, text in interfaces %}
+{% if interfaces %}{% for label, _, text in interfaces %}
 {{ label }}
 -----------
 

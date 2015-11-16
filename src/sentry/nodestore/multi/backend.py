@@ -2,13 +2,15 @@
 sentry.nodestore.multi.backend
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
 
 from __future__ import absolute_import
 
 import random
+
+import six
 
 from sentry.nodestore.base import NodeStorage
 from sentry.utils.imports import import_string
@@ -25,14 +27,14 @@ class MultiNodeStorage(NodeStorage):
     >>> MultiNodeStorage(backends=[
     >>>     ('sentry.nodestore.django.backend.DjangoNodeStorage', {}),
     >>>     ('sentry.nodestore.riak.backend.RiakNodeStorage', {}),
-    >>> ], read_selector=random.choice)
+    >>> ], read_selector=lambda backends: backends[0])
     """
     def __init__(self, backends, read_selector=random.choice, **kwargs):
         assert backends, "you should provide at least one backend"
 
         self.backends = []
         for backend, backend_options in backends:
-            if isinstance(backend, basestring):
+            if isinstance(backend, six.string_types):
                 backend = import_string(backend)
             self.backends.append(backend(**backend_options))
         self.read_selector = read_selector

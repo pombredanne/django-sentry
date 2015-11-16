@@ -2,13 +2,24 @@
 sentry.buffer.base
 ~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
+from __future__ import absolute_import
+
+import logging
 
 from django.db.models import F
+
 from sentry.signals import buffer_incr_complete
 from sentry.tasks.process_buffer import process_incr
+
+
+class BufferMount(type):
+    def __new__(cls, name, bases, attrs):
+        new_cls = type.__new__(cls, name, bases, attrs)
+        new_cls.logger = logging.getLogger('sentry.buffer.%s' % (new_cls.__name__.lower(),))
+        return new_cls
 
 
 class Buffer(object):
@@ -24,8 +35,7 @@ class Buffer(object):
     This is useful in situations where a single event might be happening so fast that the queue cant
     keep up with the updates.
     """
-    def __init__(self, delay=5, **options):
-        self.delay = delay
+    __metaclass__ = BufferMount
 
     def incr(self, model, columns, filters, extra=None):
         """
@@ -36,7 +46,18 @@ class Buffer(object):
             'columns': columns,
             'filters': filters,
             'extra': extra,
-        }, countdown=self.delay)
+        })
+
+    def validate(self):
+        """
+        Validates the settings for this backend (i.e. such as proper connection
+        info).
+
+        Raise ``InvalidConfiguration`` if there is a configuration error.
+        """
+
+    def process_pending(self):
+        return []
 
     def process(self, model, columns, filters, extra=None):
         update_kwargs = dict((c, F(c) + v) for c, v in columns.iteritems())
@@ -44,7 +65,7 @@ class Buffer(object):
             update_kwargs.update(extra)
 
         _, created = model.objects.create_or_update(
-            defaults=update_kwargs,
+            values=update_kwargs,
             **filters
         )
 

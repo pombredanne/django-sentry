@@ -5,11 +5,13 @@ from __future__ import absolute_import
 import mock
 
 from django.conf import settings
+from exam import fixture
 
-from sentry.models import Project, ProjectOption
-from sentry.testutils import TestCase, fixture
-from sentry.utils.http import (is_same_domain, is_valid_origin, get_origins,
-    absolute_uri)
+from sentry.models import Project
+from sentry.testutils import TestCase
+from sentry.utils.http import (
+    is_same_domain, is_valid_origin, get_origins, absolute_uri, is_valid_ip,
+)
 
 
 class AbsoluteUriTest(TestCase):
@@ -41,36 +43,41 @@ class SameDomainTestCase(TestCase):
 
 
 class GetOriginsTestCase(TestCase):
+    def test_project_default(self):
+        project = Project.objects.get()
+
+        with self.settings(SENTRY_ALLOW_ORIGIN=None):
+            result = get_origins(project)
+            self.assertEquals(result, frozenset(['*']))
 
     def test_project(self):
         project = Project.objects.get()
-        ProjectOption.objects.create(project=project, key='sentry:origins', value=['http://foo.example'])
+        project.update_option('sentry:origins', ['http://foo.example'])
 
-        with self.Settings(SENTRY_ALLOW_ORIGIN=None):
+        with self.settings(SENTRY_ALLOW_ORIGIN=None):
             result = get_origins(project)
             self.assertEquals(result, frozenset(['http://foo.example']))
 
     def test_project_and_setting(self):
-        from sentry.models import Project, ProjectOption
         project = Project.objects.get()
-        ProjectOption.objects.create(project=project, key='sentry:origins', value=['http://foo.example'])
+        project.update_option('sentry:origins', ['http://foo.example'])
 
-        with self.Settings(SENTRY_ALLOW_ORIGIN='http://example.com'):
+        with self.settings(SENTRY_ALLOW_ORIGIN='http://example.com'):
             result = get_origins(project)
             self.assertEquals(result, frozenset(['http://foo.example', 'http://example.com']))
 
     def test_setting_empty(self):
-        with self.Settings(SENTRY_ALLOW_ORIGIN=None):
+        with self.settings(SENTRY_ALLOW_ORIGIN=None):
             result = get_origins(None)
             self.assertEquals(result, frozenset([]))
 
     def test_setting_all(self):
-        with self.Settings(SENTRY_ALLOW_ORIGIN='*'):
+        with self.settings(SENTRY_ALLOW_ORIGIN='*'):
             result = get_origins(None)
             self.assertEquals(result, frozenset(['*']))
 
     def test_setting_uri(self):
-        with self.Settings(SENTRY_ALLOW_ORIGIN='http://example.com'):
+        with self.settings(SENTRY_ALLOW_ORIGIN='http://example.com'):
             result = get_origins(None)
             self.assertEquals(result, frozenset(['http://example.com']))
 
@@ -127,6 +134,14 @@ class IsValidOriginTestCase(TestCase):
         result = self.isValidOrigin('http://example.com:80', ['example.com'])
         self.assertEquals(result, True)
 
+    def test_base_domain_matches_domain_with_explicit_port(self):
+        result = self.isValidOrigin('http://example.com:80', ['example.com:80'])
+        assert result is True
+
+    def test_base_domain_does_not_match_domain_with_invalid_port(self):
+        result = self.isValidOrigin('http://example.com:80', ['example.com:443'])
+        assert result is False
+
     def test_base_domain_does_not_match_subdomain(self):
         result = self.isValidOrigin('http://example.com', ['foo.example.com'])
         self.assertEquals(result, False)
@@ -154,3 +169,42 @@ class IsValidOriginTestCase(TestCase):
     def test_null_invalid_graceful_with_domains(self):
         result = self.isValidOrigin('null', ['http://example.com'])
         self.assertEquals(result, False)
+
+    def test_custom_protocol_with_location(self):
+        result = self.isValidOrigin('sp://custom-thing/foo/bar', ['sp://custom-thing'])
+        assert result is True
+
+        result = self.isValidOrigin('sp://custom-thing-two/foo/bar', ['sp://custom-thing'])
+        assert result is False
+
+    def test_custom_protocol_without_location(self):
+        result = self.isValidOrigin('sp://custom-thing/foo/bar', ['sp://*'])
+        assert result is True
+
+        result = self.isValidOrigin('dp://custom-thing/foo/bar', ['sp://'])
+        assert result is False
+
+    def test_custom_protocol_with_domainish_match(self):
+        result = self.isValidOrigin('sp://custom-thing.foobar/foo/bar', ['sp://*.foobar'])
+        assert result is True
+
+        result = self.isValidOrigin('sp://custom-thing.bizbaz/foo/bar', ['sp://*.foobar'])
+        assert result is False
+
+
+class IsValidIPTestCase(TestCase):
+    def is_valid_ip(self, ip, inputs):
+        self.project.update_option('sentry:blacklisted_ips', inputs)
+        return is_valid_ip(ip, self.project)
+
+    def test_not_in_blacklist(self):
+        assert self.is_valid_ip('127.0.0.1', [])
+        assert self.is_valid_ip('127.0.0.1', ['0.0.0.0', '192.168.1.1', '10.0.0.0/8'])
+
+    def test_match_blacklist(self):
+        assert not self.is_valid_ip('127.0.0.1', ['127.0.0.1'])
+        assert not self.is_valid_ip('127.0.0.1', ['0.0.0.0', '127.0.0.1', '192.168.1.1'])
+
+    def test_match_blacklist_range(self):
+        assert not self.is_valid_ip('127.0.0.1', ['127.0.0.1/8'])
+        assert not self.is_valid_ip('127.0.0.1', ['0.0.0.0', '127.0.0.0/8', '192.168.1.0/8'])

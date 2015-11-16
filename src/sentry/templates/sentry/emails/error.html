@@ -1,51 +1,78 @@
 {% extends "sentry/emails/base.html" %}
 
+{% load sentry_helpers %}
 {% load i18n %}
 
-{% block bodyclass %} level-{{ event.get_level_display }}{% endblock %}
-
-{% block header %}
-    <h1>Sentry <small>
-        {% if group.times_seen == 1 %}
-            {% trans "New Event" %}
-        {% else %}
-            {% trans "Regression" %}
-        {% endif %}
-    </small></h1>
+{% block preheader %}
+  {% if group.times_seen == 1 %}
+      New Event on {{ project_label }}.
+  {% else %}
+      Regression on {{ project_label }}.
+  {% endif %}
 {% endblock %}
 
-{% block inner %}
-    <pre>{{ event.message }}</pre>
+{% block header %}
+    <a href="{{ link }}" class="btn">View on Sentry</a>
+    {{ block.super }}
+{% endblock %}
 
-    <p><a href="{{ link }}">{{ link }}</a></p>
+{% block main %}
+    <h2 style="margin-bottom: 15px">
+        {% url 'sentry-stream' group.project.organization.slug group.project.slug as project_link %}
+        {% if group.times_seen == 1 %}
+            New Event on <a href="{% absolute_uri project_link %}">{{ project_label }}</a>
+        {% else %}
+            Regression on <a href="{% absolute_uri project_link %}">{{ project_label }}</a>
+        {% endif %}
+    </h2>
 
-    <table class="metadata">
-        <colgroup>
-            <col style="width:25%;">
-            <col style="width:25%;">
-            <col style="width:25%;">
-            <col style="width:25%;">
-        </colgroup>
-        <tr>
-            <th>{% trans "Logger:" %}</th>
-            <td>{{ event.logger }}</td>
-            <th>{% trans "Level:" %}</th>
-            <td>{{ event.get_level_display }}</td>
-        </tr>
-        <tr>
-            <th>{% trans "Server:" %}</th>
-            <td>{{ event.server_name }}</td>
-            <th>{% trans "First Seen:" %}</th>
-            <td>{{ group.first_seen|date }}</td>
-        </tr>
-    </table>
+    <div class="event">
+      <pre class="message">{{ event.message }}</pre>
+      <div class="event-id">ID: {{ event.event_id }}</div>
+      <div class="event-date">{{ event.datetime }} UTC</div>
+    </div>
 
-    {% for int_id, label, text in interfaces %}
+    {% for label, html, _ in interfaces %}
     <div class="interface">
-        <div class="title">{{ label }}</div>
-		{{ text }}
+        <h3 class="title">{{ label }}</h3>
+        {{ html }}
     </div>
     {% endfor %}
 
-    <p><a href="{{ settings_link }}">Notification Settings</a></p>
+    {% if tags %}
+      <h3>Tags</h3>
+
+      <ul class="tag-list">
+      {% for tag_key, tag_value in tags %}
+        <li>
+            <strong>{{ tag_key }}</strong>
+            <em>=</em>
+            <span><a href="{% absolute_uri project_link %}?{{ tag_key }}={{ tag_value }}">{{ tag_value }}</a> {% if tag_value|is_url %}<a href="{{ tag_value|truncatechars:50 }}" class="icon-share"></a>{% endif %}</span>
+        </li>
+      {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if rules %}
+        <p class="via">
+            You are receiving this email due to matching rules:
+            {% for rule_label, rule_link in rules %}
+                <a href="{% absolute_uri rule_link %}">{{ rule_label }}</a>{% if not forloop.last %}, {% endif %}
+            {% endfor %}
+        </p>
+    {% endif %}
+
+
+    {# support for gmail actions #}
+    <div itemscope itemtype="http://schema.org/EmailMessage">
+      <meta itemprop="description" content="View Event Details in Sentry"/>
+      <div itemprop="action" itemscope itemtype="http://schema.org/ViewAction">
+        <link itemprop="url" href="{{ link }}"/>
+        <meta itemprop="name" content="View in Sentry"/>
+      </div>
+      <div itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+        <meta itemprop="name" content="GetSentry"/>
+        <link itemprop="url" href="https://getsentry.com/"/>
+      </div>
+    </div>
 {% endblock %}

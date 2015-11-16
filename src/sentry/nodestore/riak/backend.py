@@ -2,57 +2,75 @@
 sentry.nodestore.riak.backend
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2015 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
 
 from __future__ import absolute_import
 
-import riak
-import riak.resolver
+import six
+import simplejson as json
 
 from sentry.nodestore.base import NodeStorage
+from .client import RiakClient
 
 
 class RiakNodeStorage(NodeStorage):
     """
     A Riak-based backend for storing node data.
 
-    >>> RiakNodeStorage(nodes=[{'host':'127.0.0.1','http_port':8098}])
+    >>> RiakNodeStorage(nodes=[{'host':'127.0.0.1','port':8098}])
     """
-    def __init__(self, nodes, bucket='nodes',
-                 resolver=riak.resolver.last_written_resolver, **kwargs):
-        self.conn = riak.RiakClient(
-            nodes=nodes, resolver=resolver, **kwargs)
-        self.bucket = self.conn.bucket(bucket)
-        super(RiakNodeStorage, self).__init__(**kwargs)
-
-    def create(self, data):
-        obj = self.bucket.new(data=data)
-        obj.store()
-        return obj.key
-
-    def delete(self, id):
-        obj = self.bucket.new(key=id)
-        obj.delete()
-
-    def get(self, id):
-        # just fetch it from a random backend, we're not aiming for consistency
-        obj = self.bucket.get(key=id, r=1)
-        if not obj:
-            return None
-        return obj.data
-
-    def get_multi(self, id_list, r=1):
-        result = self.bucket.multiget(id_list)
-        return dict(
-            (obj.key, obj.data)
-            for obj in result
+    def __init__(self, nodes, bucket='nodes', timeout=1, cooldown=5,
+                 max_retries=3, multiget_pool_size=5, tcp_keepalive=True,
+                 protocol=None):
+        # protocol being defined is useless, but is needed for backwards
+        # compatability and leveraged as an opportunity to yell at the user
+        if protocol == 'pbc':
+            raise ValueError("'pbc' protocol is no longer supported")
+        if protocol is not None:
+            import warnings
+            warnings.warn("'protocol' has been deprecated",
+                          DeprecationWarning)
+        self.bucket = bucket
+        self.conn = RiakClient(
+            hosts=nodes,
+            max_retries=max_retries,
+            multiget_pool_size=multiget_pool_size,
+            cooldown=cooldown,
+            tcp_keepalive=tcp_keepalive,
         )
 
     def set(self, id, data):
-        obj = self.bucket.new(key=id, data=data)
-        obj.store()
+        data = json.dumps(data, separators=(',', ':'))
+        self.conn.put(self.bucket, id, data, returnbody='false')
+
+    def delete(self, id):
+        self.conn.delete(self.bucket, id)
+
+    def get(self, id):
+        rv = self.conn.get(self.bucket, id, r=1)
+        if rv.status != 200:
+            return None
+        return json.loads(rv.data)
+
+    def get_multi(self, id_list):
+        # shortcut for just one id since this is a common
+        # case for us from EventManager.bind_nodes
+        if len(id_list) == 1:
+            id = id_list[0]
+            return {id: self.get(id)}
+
+        rv = self.conn.multiget(self.bucket, id_list, r=1)
+        results = {}
+        for key, value in rv.iteritems():
+            if isinstance(value, Exception):
+                six.reraise(type(value), value)
+            if value.status != 200:
+                results[key] = None
+            else:
+                results[key] = json.loads(value.data)
+        return results
 
     def cleanup(self, cutoff_timestamp):
         # TODO(dcramer): we should either index timestamps or have this run

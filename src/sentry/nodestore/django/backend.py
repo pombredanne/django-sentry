@@ -2,16 +2,19 @@
 sentry.nodestore.django.backend
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
 
 from __future__ import absolute_import
 
+import math
+
 from django.utils import timezone
 
 from sentry.db.models import create_or_update
 from sentry.nodestore.base import NodeStorage
+
 
 from .models import Node
 
@@ -36,11 +39,20 @@ class DjangoNodeStorage(NodeStorage):
         create_or_update(
             Node,
             id=id,
-            defaults={
+            values={
                 'data': data,
                 'timestamp': timezone.now(),
             },
         )
 
     def cleanup(self, cutoff_timestamp):
-        Node.objects.filter(timestamp__lte=cutoff_timestamp).delete()
+        from sentry.db.deletion import BulkDeleteQuery
+
+        total_seconds = (timezone.now() - cutoff_timestamp).total_seconds()
+        days = math.floor(total_seconds / 86400)
+
+        BulkDeleteQuery(
+            model=Node,
+            dtfield='timestamp',
+            days=days,
+        ).execute()

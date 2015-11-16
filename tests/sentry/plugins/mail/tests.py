@@ -3,12 +3,25 @@
 from __future__ import absolute_import
 
 import mock
-from mock import Mock
+
+from django.core import mail
 from django.utils import timezone
-from sentry.interfaces import Stacktrace
-from sentry.models import Alert, Event, Group, AccessGroup
+from exam import fixture
+from mock import Mock
+
+from sentry import features
+from sentry.digests.notifications import (
+    build_digest,
+    event_to_record,
+)
+from sentry.interfaces.stacktrace import Stacktrace
+from sentry.models import (
+    Event, Group, OrganizationMember, OrganizationMemberTeam, Rule
+)
+from sentry.plugins import Notification
 from sentry.plugins.sentry_mail.models import MailPlugin
-from sentry.testutils import TestCase, fixture
+from sentry.testutils import TestCase
+from sentry.utils.email import MessageBuilder
 
 
 class MailPluginTest(TestCase):
@@ -21,31 +34,21 @@ class MailPluginTest(TestCase):
     def test_should_notify_no_sendable_users(self):
         assert not self.plugin.should_notify(group=Mock(), event=Mock())
 
-    @mock.patch('sentry.plugins.sentry_mail.models.MailPlugin._send_mail')
-    def test_notify_users_renders_interfaces(self, _send_mail):
-        group = Group(
-            id=2,
-            first_seen=timezone.now(),
-            last_seen=timezone.now(),
-            project=self.project,
-        )
+    def test_simple_notification(self):
+        group = self.create_group(message='Hello world')
+        event = self.create_event(group=group, message='Hello world')
 
-        stacktrace = Mock(spec=Stacktrace)
-        stacktrace.to_email_html.return_value = 'foo bar'
-        stacktrace.get_title.return_value = 'Stacktrace'
+        rule = Rule.objects.create(project=self.project, label='my rule')
 
-        event = Event()
-        event.group = group
-        event.message = 'hello world'
-        event.logger = 'root'
-        event.site = None
-        event.interfaces = {'sentry.interfaces.Stacktrace': stacktrace}
+        notification = Notification(event=event, rule=rule)
 
-        with self.Settings(SENTRY_URL_PREFIX='http://example.com'):
-            self.plugin.notify_users(group, event)
+        with self.settings(SENTRY_URL_PREFIX='http://example.com'):
+            self.plugin.notify(notification)
 
-        stacktrace.get_title.assert_called_once_with()
-        stacktrace.to_email_html.assert_called_once_with(event)
+        msg = mail.outbox[0]
+        assert msg.subject == '[Sentry] [foo Bar] ERROR: Hello world'
+        print dir(msg)
+        assert 'my rule' in msg.alternatives[0][0]
 
     @mock.patch('sentry.plugins.sentry_mail.models.MailPlugin._send_mail')
     def test_notify_users_renders_interfaces_with_utf8(self, _send_mail):
@@ -62,13 +65,14 @@ class MailPluginTest(TestCase):
 
         event = Event()
         event.group = group
+        event.project = self.project
         event.message = 'hello world'
-        event.logger = 'root'
-        event.site = None
         event.interfaces = {'sentry.interfaces.Stacktrace': stacktrace}
 
-        with self.Settings(SENTRY_URL_PREFIX='http://example.com'):
-            self.plugin.notify_users(group, event)
+        notification = Notification(event=event)
+
+        with self.settings(SENTRY_URL_PREFIX='http://example.com'):
+            self.plugin.notify(notification)
 
         stacktrace.get_title.assert_called_once_with()
         stacktrace.to_email_html.assert_called_once_with(event)
@@ -88,13 +92,14 @@ class MailPluginTest(TestCase):
 
         event = Event()
         event.group = group
+        event.project = self.project
         event.message = 'Soubor ji\xc5\xbe existuje'
-        event.logger = 'root'
-        event.site = None
         event.interfaces = {'sentry.interfaces.Stacktrace': stacktrace}
 
-        with self.Settings(SENTRY_URL_PREFIX='http://example.com'):
-            self.plugin.notify_users(group, event)
+        notification = Notification(event=event)
+
+        with self.settings(SENTRY_URL_PREFIX='http://example.com'):
+            self.plugin.notify(notification)
 
         stacktrace.get_title.assert_called_once_with()
         stacktrace.to_email_html.assert_called_once_with(event)
@@ -106,24 +111,28 @@ class MailPluginTest(TestCase):
             first_seen=timezone.now(),
             last_seen=timezone.now(),
             project=self.project,
+            message='hello world',
+            logger='root',
         )
 
         event = Event(
             group=group,
-            message='hello world',
-            logger='root',
+            message=group.message,
             project=self.project,
             datetime=group.last_seen,
         )
 
-        with self.Settings(SENTRY_URL_PREFIX='http://example.com'):
-            self.plugin.notify_users(group, event)
+        notification = Notification(event=event)
 
-        _send_mail.assert_called_once()
+        with self.settings(SENTRY_URL_PREFIX='http://example.com'):
+            self.plugin.notify(notification)
+
+        assert _send_mail.call_count is 1
         args, kwargs = _send_mail.call_args
-        self.assertEquals(kwargs.get('fail_silently'), False)
         self.assertEquals(kwargs.get('project'), self.project)
-        assert kwargs.get('subject') == u"[{0}] ERROR: hello world".format(self.project.name)
+        self.assertEquals(kwargs.get('group'), group)
+        assert kwargs.get('subject') == u"[{0} {1}] ERROR: hello world".format(
+            self.team.name, self.project.name)
 
     @mock.patch('sentry.plugins.sentry_mail.models.MailPlugin._send_mail')
     def test_multiline_error(self, _send_mail):
@@ -132,80 +141,124 @@ class MailPluginTest(TestCase):
             first_seen=timezone.now(),
             last_seen=timezone.now(),
             project=self.project,
+            message='hello world\nfoo bar',
+            logger='root',
         )
 
         event = Event(
             group=group,
-            message='hello world\nfoo bar',
-            logger='root',
+            message=group.message,
             project=self.project,
             datetime=group.last_seen,
         )
 
-        with self.Settings(SENTRY_URL_PREFIX='http://example.com'):
-            self.plugin.notify_users(group, event)
+        notification = Notification(event=event)
 
-        _send_mail.assert_called_once()
+        with self.settings(SENTRY_URL_PREFIX='http://example.com'):
+            self.plugin.notify(notification)
+
+        assert _send_mail.call_count is 1
         args, kwargs = _send_mail.call_args
-        assert kwargs.get('subject') == u"[{0}] ERROR: hello world".format(self.project.name)
-
-    def test_get_emails_for_users(self):
-        from sentry.models import UserOption, User
-
-        project = self.project
-
-        user = User.objects.create(username='foo', email='foo@example.com')
-        user2 = User.objects.create(username='baz', email='baz@example.com')
-        user3 = User.objects.create(username='bar', email='bar@example.com')
-
-        result = sorted(self.plugin.get_emails_for_users([user.pk, user2.pk, user3.pk]))
-        assert result == sorted([user.email, user2.email, user3.email])
-
-        UserOption.objects.create(
-            key='alert_email', value='foobaz@example.com', user=user2)
-        UserOption.objects.create(
-            key='mail:email', value='foobar@example.com', user=user3, project=project)
-
-        result = sorted(self.plugin.get_emails_for_users(
-            [user.pk, user2.pk, user3.pk], project=project))
-        assert result == sorted([user.email, 'foobar@example.com', 'foobaz@example.com'])
+        assert kwargs.get('subject') == u"[{0} {1}] ERROR: hello world".format(
+            self.team.name, self.project.name)
 
     def test_get_sendable_users(self):
-        from sentry.models import Project, UserOption, User
+        from sentry.models import UserOption, User
 
-        user = User.objects.create(username='foo', email='foo@example.com', is_active=True)
-        user2 = User.objects.create(username='baz', email='baz@example.com', is_active=True)
-        user3 = User.objects.create(username='baz2', email='bar@example.com', is_active=True)
+        user = self.create_user(email='foo@example.com', is_active=True)
+        user2 = self.create_user(email='baz@example.com', is_active=True)
+        self.create_user(email='baz2@example.com', is_active=True)
 
         # user with inactive account
-        User.objects.create(username='bar', email='bar@example.com', is_active=False)
+        self.create_user(email='bar@example.com', is_active=False)
         # user not in any groups
-        User.objects.create(username='bar2', email='bar@example.com', is_active=True)
+        self.create_user(email='bar2@example.com', is_active=True)
 
-        project = Project.objects.create(name='Test', slug='test', owner=user)
-        project.team.member_set.get_or_create(user=user)
-        project.team.member_set.get_or_create(user=user2)
+        organization = self.create_organization(owner=user)
+        team = self.create_team(organization=organization)
 
-        ag = AccessGroup.objects.create(team=project.team)
-        ag.members.add(user3)
-        ag.projects.add(project)
+        project = self.create_project(name='Test', team=team)
+        OrganizationMemberTeam.objects.create(
+            organizationmember=OrganizationMember.objects.get(
+                user=user,
+                organization=organization,
+            ),
+            team=team,
+        )
+        self.create_member(user=user2, organization=organization, teams=[team])
 
         # all members
-        assert (sorted(set([user.pk, user2.pk, user3.pk])) ==
+        assert (sorted(set([user.pk, user2.pk])) ==
                 sorted(self.plugin.get_sendable_users(project)))
 
         # disabled user2
-        UserOption.objects.create(key='mail:alert', value=0, project=project, user=user2)
+        UserOption.objects.create(key='mail:alert', value=0,
+                                  project=project, user=user2)
 
         assert user2.pk not in self.plugin.get_sendable_users(project)
 
-    @mock.patch('sentry.plugins.sentry_mail.models.MailPlugin._send_mail')
-    def test_on_alert(self, _send_mail):
-        alert = Alert.objects.create(message='This is a test alert', project=self.project)
+        user4 = User.objects.create(username='baz4', email='bar@example.com',
+                                    is_active=True)
+        self.create_member(user=user4, organization=organization, teams=[team])
+        assert user4.pk in self.plugin.get_sendable_users(project)
 
-        self.plugin.on_alert(alert=alert)
+        # disabled by default user4
+        uo1 = UserOption.objects.create(key='subscribe_by_default', value='0',
+                                  project=project, user=user4)
 
-        _send_mail.assert_called_once()
-        args, kwargs = _send_mail.call_args
-        assert kwargs.get('subject') == u"[{0}] ALERT: {1}".format(
-            self.project.name, alert.message)
+        assert user4.pk not in self.plugin.get_sendable_users(project)
+
+        uo1.delete()
+
+        UserOption.objects.create(key='subscribe_by_default', value=u'0',
+                                  project=project, user=user4)
+
+        assert user4.pk not in self.plugin.get_sendable_users(project)
+
+    def test_notify_users_with_utf8_subject(self):
+        group = self.create_group(message=u'רונית מגן')
+        event = self.create_event(group=group, message='Hello world')
+
+        notification = Notification(event=event)
+
+        with self.settings(SENTRY_URL_PREFIX='http://example.com'):
+            self.plugin.notify(notification)
+
+        msg = mail.outbox[0]
+        assert msg.subject == u'[Sentry] [foo Bar] ERROR: רונית מגן'
+
+    @mock.patch.object(MailPlugin, 'notify', side_effect=MailPlugin.notify, autospec=True)
+    @mock.patch.object(MessageBuilder, 'send', autospec=True)
+    @mock.patch.object(features, 'has')
+    def test_notify_digest(self, has, send, notify):
+        has.side_effect = lambda label, *a, **k: {
+            'projects:digests:deliver': True,
+        }.get(label, False)
+
+        project = self.event.project
+        rule = project.rule_set.all()[0]
+        digest = build_digest(
+            project,
+            (
+                event_to_record(self.create_event(group=self.create_group()), (rule,)),
+                event_to_record(self.event, (rule,)),
+            ),
+        )
+        self.plugin.notify_digest(project, digest)
+        assert send.call_count is 1
+        assert notify.call_count is 0
+
+    @mock.patch.object(MailPlugin, 'notify', side_effect=MailPlugin.notify, autospec=True)
+    @mock.patch.object(MessageBuilder, 'send', autospec=True)
+    def test_notify_digest_single_record(self, send, notify):
+        project = self.event.project
+        rule = project.rule_set.all()[0]
+        digest = build_digest(
+            project,
+            (
+                event_to_record(self.event, (rule,)),
+            ),
+        )
+        self.plugin.notify_digest(project, digest)
+        assert send.call_count is 1
+        assert notify.call_count is 1

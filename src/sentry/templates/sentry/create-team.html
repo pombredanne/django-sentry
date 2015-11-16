@@ -1,0 +1,17 @@
+{% extends "sentry/bases/modal.html" %}
+
+{% load i18n %}
+
+{% block title %}{% trans "New Team" %} | {{ block.super }}{% endblock %}
+
+{% block content %}
+<div class="create-flow">
+  <div class="page-header">
+    <h2>{% trans "Create a New Team" %}</h2>
+  </div>
+
+  <p>{% blocktrans %}Teams group members' access to a specific focus, e.g. a major product or application that may have sub-projects.{% endblocktrans %}</p>
+
+  {% include "sentry/partial/_form.html" %}
+</div>
+{% endblock %}

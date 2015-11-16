@@ -2,49 +2,58 @@
 
 {% load i18n %}
 {% load sentry_helpers %}
-{% load sentry_plugins %}
 
-{% block title %}{% trans "Manage API Keys" %} | {{ block.super }}{% endblock %}
+{% block title %}{% trans "Client Keys" %} | {{ block.super }}{% endblock %}
 
-{% block inner %}
-    <div class="page-header">
-        {% if can_add_key %}
-            <a href="{% url 'sentry-new-project-key' project.team.slug project.slug %}" class="btn pull-right btn-primary">{% trans "Generate New Key" %}</a>
-        {% endif %}
-        <h2>
-            {% trans "Manage API Keys" %}
-        </h2>
-    </div>
-    <table class="table table-bordered table-striped">
+{% block main %}
+    {% if ACCESS.project_write %}
+        <form method="post" class="pull-right" action="{% url 'sentry-new-project-key' project.organization.slug project.slug %}"
+               style="position: relative; top: -6px;">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary btn-sm">{% trans "Generate New Key" %}</button>
+        </form>
+    {% endif %}
+    <h2>{% trans "Client Keys" %}</h2>
+
+    <p>To send data to Sentry you will need to configure an SDK with a client key (usually referred to as the
+        <code>SENTRY_DSN</code> value). For more information on integrating Sentry with your application take
+        a look at our <a href="https://docs.getsentry.com">documentation</a>.</p>
+
+    <table class="table table-bordered">
         <colgroup>
             <col/>
-            <col width="100px"/>
-            <col width="100px"/>
+            <col width="200px"/>
         </colgroup>
-        <thead>
-            <tr>
-                <th>{% trans "API Key" %}</th>
-                <th style="text-align:center">{% trans "Actions" %}</th>
-            </tr>
-        </thead>
         <tbody>
             {% for key in key_list %}
                 <tr>
                     <td>
-                        <strong>{{ key.public_key }}</strong> {% if key.user %} &mdash; {{ key.user.email }}{% endif %}<br>
-                        <code class="clippy">{{ key.dsn_private }}</code><br>
-                        {% if key.user_added %}
-                            <small>Added by {{ key.user_added.email }} ({{ key.date_added|timesince }})</small>
-                        {% endif %}
-                    </td>
-                    <td style="text-align:center; vertical-align:middle;">
-                        {% if key.can_remove %}
-                            <form method="POST" action="{% url 'sentry-remove-project-key' project.team.slug project.slug key.id %}" style="display:inline">
-                                {% csrf_token %}
-                                <input type="submit" class="btn btn-danger btn-small" value="{% trans "Revoke" %}">
-                            </form>
+                        {% if key.label %}
+                            <h5 style="margin-bottom: 0;"><a href="{% url 'sentry-edit-project-key' project.organization.slug project.slug key.id %}">{{ key.label }}</a></h5>
                         {% else %}
-                            &mdash;
+                            <h5 style="margin-bottom: 0;"><a href="{% url 'sentry-edit-project-key' project.organization.slug project.slug key.id %}">{{ key.public_key }}</a></h5>
+                        {% endif %}<br>
+                        <div class="form-control disabled auto-select">{{ key.dsn_private }}</div>
+                    </td>
+                    <td style="text-align:right;padding-top:50px !important;">
+                        {% if ACCESS.project_write %}
+                            {% if key.is_active %}
+                                <form method="POST" action="{% url 'sentry-disable-project-key' project.organization.slug project.slug key.id %}" style="display:inline">
+                                    {% csrf_token %}
+                                    <input type="submit" class="btn btn-default btn-sm" value="{% trans "Disable" %}">
+                                </form>
+                            {% else %}
+                                <form method="POST" action="{% url 'sentry-enable-project-key' project.organization.slug project.slug key.id %}" style="display:inline">
+                                    {% csrf_token %}
+                                    <input type="submit" class="btn btn-primary btn-sm" value="{% trans "Enable" %}">
+                                </form>
+                            {% endif %}
+                        {% endif %}
+                        {% if ACCESS.project_write %}
+                            <form method="POST" action="{% url 'sentry-remove-project-key' project.organization.slug project.slug key.id %}" style="display:inline">
+                                {% csrf_token %}
+                                <input type="submit" class="btn btn-danger btn-sm" value="{% trans "Revoke" %}">
+                            </form>
                         {% endif %}
                     </td>
                 </tr>

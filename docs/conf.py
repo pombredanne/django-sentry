@@ -11,10 +11,18 @@
 # All configuration values have a default; values that are commented out
 # serve to show the default.
 
-import sys, os
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir, 'src'))
+sys.path.insert(1, os.path.join(os.path.dirname(__file__), '_themes'))
 
 if 'DJANGO_SETTINGS_MODULE' not in os.environ:
     os.environ['DJANGO_SETTINGS_MODULE'] = 'sentry.conf.server'
+
+# TODO(dcramer): this is to allow autodoc support
+from django.conf import settings
+settings.SENTRY_CACHE = 'sentry.cache.django.DjangoCache'
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
@@ -29,7 +37,13 @@ if 'DJANGO_SETTINGS_MODULE' not in os.environ:
 # Add any Sphinx extension module names here, as strings. They can be extensions
 # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
 #extensions = ['sphinxtogithub']
-extensions = ['sphinx.ext.autodoc', 'sphinx.ext.intersphinx', 'sphinx.ext.todo', 'sphinx.ext.coverage', 'sphinx.ext.viewcode']
+extensions = [
+    'sphinx.ext.autodoc',
+    'sphinx.ext.intersphinx',
+    'sphinx.ext.todo',
+    'sphinx.ext.coverage',
+    'sphinx.ext.viewcode',
+]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -45,7 +59,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'Sentry'
-copyright = u'2011, David Cramer'
+copyright = u'2010-2015, the Sentry Team'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -96,7 +110,7 @@ pygments_style = 'sphinx'
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
-html_theme = 'nature'
+html_theme = 'kr'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
@@ -104,7 +118,7 @@ html_theme = 'nature'
 #html_theme_options = {}
 
 # Add any paths that contain custom themes here, relative to this directory.
-#html_theme_path = []
+html_theme_path = ['_themes']
 
 # The name for this set of Sphinx documents.  If None, it defaults to
 # "<project> v<release> documentation".
@@ -115,7 +129,7 @@ html_theme = 'nature'
 
 # The name of an image file (relative to this directory) to place at the top
 # of the sidebar.
-#html_logo = None
+html_logo = "_static/logo.png"
 
 # The name of an image file (within the static path) to use as favicon of the
 # docs.  This file should be a Windows icon file (.ico) being 16x16 or 32x32
@@ -183,8 +197,10 @@ htmlhelp_basename = 'Sentrydoc'
 # Grouping the document tree into LaTeX files. List of tuples
 # (source start file, target name, title, author, documentclass [howto/manual]).
 latex_documents = [
-  ('index', 'Sentry.tex', u'Sentry Documentation',
-   u'David Cramer', 'manual'),
+    (
+        'index', 'Sentry.tex', u'Sentry Documentation',
+        u'Functional Software Inc.', 'manual'
+    ),
 ]
 
 # The name of an image file (relative to this directory) to place at the top of
@@ -217,5 +233,10 @@ latex_documents = [
 # (source start file, name, description, authors, manual section).
 man_pages = [
     ('index', 'sentry', u'Sentry Documentation',
-     [u'David Cramer'], 1)
+     [u'Functional Software Inc.'], 1)
 ]
+
+if os.environ.get('SENTRY_FEDERATED_DOCS') != '1':
+    sys.path.insert(0, os.path.abspath('_sentryext'))
+    import sentryext
+    sentryext.activate()

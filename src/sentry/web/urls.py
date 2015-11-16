@@ -2,33 +2,71 @@
 sentry.web.urls
 ~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
-
-import re
-
-try:
-    from django.conf.urls import include, patterns, url
-except ImportError:
-    # django < 1.5 compat
-    from django.conf.urls.defaults import include, patterns, url  # NOQA
-
-from sentry.web import api
-from sentry.web.frontend import (
-    alerts, accounts, generic, groups, events,
-    admin, docs, teams, users, explore, explore_code)
-
-import sentry.web.frontend.projects.general
-import sentry.web.frontend.projects.keys
-import sentry.web.frontend.projects.notifications
-import sentry.web.frontend.projects.plugins
-import sentry.web.frontend.projects.quotas
-import sentry.web.frontend.projects.remove
-import sentry.web.frontend.projects.settings
-import sentry.web.frontend.projects.tags
+from __future__ import absolute_import
 
 __all__ = ('urlpatterns',)
+
+from django.conf.urls import include, patterns, url
+from django.conf import settings
+from django.views.generic import RedirectView
+
+from sentry.web import api
+from sentry.web.frontend import accounts, admin, generic
+
+from sentry.web.frontend.admin_queue import AdminQueueView
+from sentry.web.frontend.accept_organization_invite import AcceptOrganizationInviteView
+from sentry.web.frontend.auth_link_identity import AuthLinkIdentityView
+from sentry.web.frontend.auth_login import AuthLoginView
+from sentry.web.frontend.auth_logout import AuthLogoutView
+from sentry.web.frontend.auth_organization_login import AuthOrganizationLoginView
+from sentry.web.frontend.auth_provider_login import AuthProviderLoginView
+from sentry.web.frontend.error_page_embed import ErrorPageEmbedView
+from sentry.web.frontend.group_event_json import GroupEventJsonView
+from sentry.web.frontend.group_plugin_action import GroupPluginActionView
+from sentry.web.frontend.home import HomeView
+from sentry.web.frontend.mailgun_inbound_webhook import MailgunInboundWebhookView
+from sentry.web.frontend.organization_api_keys import OrganizationApiKeysView
+from sentry.web.frontend.organization_api_key_settings import OrganizationApiKeySettingsView
+from sentry.web.frontend.organization_audit_log import OrganizationAuditLogView
+from sentry.web.frontend.organization_auth_settings import OrganizationAuthSettingsView
+from sentry.web.frontend.organization_members import OrganizationMembersView
+from sentry.web.frontend.organization_member_settings import OrganizationMemberSettingsView
+from sentry.web.frontend.organization_settings import OrganizationSettingsView
+from sentry.web.frontend.create_organization import CreateOrganizationView
+from sentry.web.frontend.create_organization_member import CreateOrganizationMemberView
+from sentry.web.frontend.create_project import CreateProjectView
+from sentry.web.frontend.create_project_key import CreateProjectKeyView
+from sentry.web.frontend.create_team import CreateTeamView
+from sentry.web.frontend.disable_project_key import DisableProjectKeyView
+from sentry.web.frontend.edit_project_key import EditProjectKeyView
+from sentry.web.frontend.enable_project_key import EnableProjectKeyView
+from sentry.web.frontend.remove_project_key import RemoveProjectKeyView
+from sentry.web.frontend.project_issue_tracking import ProjectIssueTrackingView
+from sentry.web.frontend.project_keys import ProjectKeysView
+from sentry.web.frontend.project_plugins import ProjectPluginsView
+from sentry.web.frontend.project_plugin_configure import ProjectPluginConfigureView
+from sentry.web.frontend.project_plugin_disable import ProjectPluginDisableView
+from sentry.web.frontend.project_plugin_enable import ProjectPluginEnableView
+from sentry.web.frontend.project_plugin_reset import ProjectPluginResetView
+from sentry.web.frontend.project_notifications import ProjectNotificationsView
+from sentry.web.frontend.project_quotas import ProjectQuotasView
+from sentry.web.frontend.project_release_tracking import ProjectReleaseTrackingView
+from sentry.web.frontend.project_rules import ProjectRulesView
+from sentry.web.frontend.project_rule_edit import ProjectRuleEditView
+from sentry.web.frontend.project_rule_remove import ProjectRuleRemoveView
+from sentry.web.frontend.project_settings import ProjectSettingsView
+from sentry.web.frontend.project_tags import ProjectTagsView
+from sentry.web.frontend.react_page import GenericReactPageView, ReactPageView
+from sentry.web.frontend.release_webhook import ReleaseWebhookView
+from sentry.web.frontend.remove_account import RemoveAccountView
+from sentry.web.frontend.remove_organization import RemoveOrganizationView
+from sentry.web.frontend.remove_project import RemoveProjectView
+from sentry.web.frontend.remove_team import RemoveTeamView
+from sentry.web.frontend.replay_event import ReplayEventView
+from sentry.web.frontend.team_settings import TeamSettingsView
 
 
 def init_all_applications():
@@ -45,19 +83,83 @@ def init_all_applications():
 
 init_all_applications()
 
-urlpatterns = patterns('',
+# Only create one instance of the ReactPageView since it's duplicated errywhere
+react_page_view = ReactPageView.as_view()
+
+urlpatterns = patterns('')
+
+if settings.DEBUG:
+    import sentry.web.frontend.debug.mail
+    from sentry.web.frontend.debug.debug_trigger_error import DebugTriggerErrorView
+    from sentry.web.frontend.debug.debug_error_embed import DebugErrorPageEmbedView
+    from sentry.web.frontend.debug.debug_new_release_email import DebugNewReleaseEmailView
+
+    urlpatterns += patterns(
+        '',
+        url(r'^debug/mail/new-event/$',
+            sentry.web.frontend.debug.mail.new_event),
+        url(r'^debug/mail/new-note/$',
+            sentry.web.frontend.debug.mail.new_note),
+        url(r'^debug/mail/new-release/$',
+            DebugNewReleaseEmailView.as_view()),
+        url(r'^debug/mail/assigned/$',
+            sentry.web.frontend.debug.mail.assigned),
+        url(r'^debug/mail/digest/$',
+            sentry.web.frontend.debug.mail.digest),
+        url(r'^debug/mail/request-access/$',
+            sentry.web.frontend.debug.mail.request_access),
+        url(r'^debug/mail/access-approved/$',
+            sentry.web.frontend.debug.mail.access_approved),
+        url(r'^debug/embed/error-page/$',
+            DebugErrorPageEmbedView.as_view()),
+        url(r'^debug/trigger-error/$',
+            DebugTriggerErrorView.as_view()),
+    )
+
+urlpatterns += patterns(
+    '',
+    # Store endpoints first since they are the most active
+    url(r'^api/store/$', api.StoreView.as_view(),
+        name='sentry-api-store'),
+    url(r'^api/(?P<project_id>[\w_-]+)/store/$', api.StoreView.as_view(),
+        name='sentry-api-store'),
+    url(r'^api/(?P<project_id>\d+)/csp-report/$', api.CspReportView.as_view(),
+        name='sentry-api-csp-report'),
+
     url(r'^_static/(?P<module>[^/]+)/(?P<path>.*)$', generic.static_media,
         name='sentry-media'),
 
-    # Account
-    url(r'^login/$', accounts.login,
+    # API
+    url(r'^api/0/', include('sentry.api.urls')),
+    url(r'^api/hooks/mailgun/inbound/', MailgunInboundWebhookView.as_view(),
+        name='sentry-mailgun-inbound-hook'),
+    url(r'^api/hooks/release/(?P<plugin_id>[^/]+)/(?P<project_id>[^/]+)/(?P<signature>[^/]+)/', ReleaseWebhookView.as_view(),
+        name='sentry-release-hook'),
+    url(r'^api/embed/error-page/$', ErrorPageEmbedView.as_view(),
+        name='sentry-error-page-embed'),
+
+    # Auth
+    url(r'^auth/link/(?P<organization_slug>[^/]+)/$', AuthLinkIdentityView.as_view(),
+        name='sentry-auth-link-identity'),
+    url(r'^auth/login/$', AuthLoginView.as_view(),
         name='sentry-login'),
+    url(r'^auth/login/(?P<organization_slug>[^/]+)/$', AuthOrganizationLoginView.as_view(),
+        name='sentry-auth-organization'),
+    url(r'^auth/sso/$', AuthProviderLoginView.as_view(),
+        name='sentry-auth-sso'),
+
+
+    url(r'^auth/logout/$', AuthLogoutView.as_view(),
+        name='sentry-logout'),
+
+    # Account
     url(r'^login-redirect/$', accounts.login_redirect,
         name='sentry-login-redirect'),
-    url(r'^logout/$', accounts.logout,
-        name='sentry-logout'),
-    url(r'^register/$', accounts.register,
+    url(r'^register/$', AuthLoginView.as_view(),
         name='sentry-register'),
+    url(r'^account/sudo/$', 'sudo.views.sudo',
+        {'template_name': 'sentry/account/sudo.html'},
+        name='sentry-sudo'),
     url(r'^account/recover/$', accounts.recover,
         name='sentry-account-recover'),
     url(r'^account/recover/confirm/(?P<user_id>[\d]+)/(?P<hash>[0-9a-zA-Z]+)/$', accounts.recover_confirm,
@@ -70,120 +172,19 @@ urlpatterns = patterns('',
         name='sentry-account-settings-identities'),
     url(r'^account/settings/notifications/$', accounts.notification_settings,
         name='sentry-account-settings-notifications'),
+    url(r'^account/remove/$', RemoveAccountView.as_view(),
+        name='sentry-remove-account'),
     url(r'^account/settings/social/', include('social_auth.urls')),
 
-    # Settings - Teams
-    url(r'^account/teams/new/$', teams.create_new_team,
-        name='sentry-new-team'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/settings/$', teams.manage_team,
-        name='sentry-manage-team'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/remove/$', teams.remove_team,
-        name='sentry-remove-team'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/groups/$', teams.manage_access_groups,
-        name='sentry-manage-access-groups'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/groups/new/$', teams.new_access_group,
-        name='sentry-new-access-group'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/groups/(?P<group_id>\d+)/edit/$', teams.access_group_details,
-        name='sentry-edit-access-group'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/groups/(?P<group_id>\d+)/remove/$', teams.remove_access_group,
-        name='sentry-remove-access-group'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/groups/(?P<group_id>\d+)/members/$', teams.access_group_members,
-        name='sentry-access-group-members'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/groups/(?P<group_id>\d+)/members/(?P<user_id>\d+)/remove/$',
-        teams.remove_access_group_member, name='sentry-remove-access-group-member'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/groups/(?P<group_id>\d+)/projects/$', teams.access_group_projects,
-        name='sentry-access-group-projects'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/groups/(?P<group_id>\d+)/projects/(?P<project_id>\d+)/remove/$',
-        teams.remove_access_group_project, name='sentry-remove-access-group-project'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/members/$', teams.manage_team_members,
-        name='sentry-manage-team-members'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/members/new/$', teams.new_team_member,
-        name='sentry-new-team-member'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/members/(?P<member_id>\d+)/edit/$', teams.edit_team_member,
-        name='sentry-edit-team-member'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/members/(?P<member_id>\d+)/remove/$', teams.remove_team_member,
-        name='sentry-remove-team-member'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/members/pending/(?P<member_id>\d+)/remove/$', teams.remove_pending_team_member,
-        name='sentry-remove-pending-team-member'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/members/pending/(?P<member_id>\d+)/reinvite/$', teams.reinvite_pending_team_member,
-        name='sentry-reinvite-pending-team-member'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/projects/$', teams.manage_team_projects,
-        name='sentry-manage-team-projects'),
-    url(r'^account/teams/(?P<team_slug>[\w_-]+)/projects/new/$', teams.create_new_team_project,
-        name='sentry-new-project'),
-    url(r'^accept/(?P<member_id>\d+)/(?P<token>\w+)/$', teams.accept_invite,
-        name='sentry-accept-invite'),
-
-    # Settings - Projects
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/get-started/$',
-        sentry.web.frontend.projects.general.get_started,
-        name='sentry-get-started'),
-
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/settings/$',
-        sentry.web.frontend.projects.settings.manage_project,
-        name='sentry-manage-project'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/docs/$',
-        docs.client_help,
-        name='sentry-project-client-help'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/docs/(?P<platform>%s)/$' % ('|'.join(re.escape(r) for r in docs.PLATFORM_LIST),),
-        docs.client_guide,
-        name='sentry-docs-client'),
-
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/keys/$',
-        sentry.web.frontend.projects.keys.manage_project_keys,
-        name='sentry-manage-project-keys'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/keys/new/$',
-        sentry.web.frontend.projects.keys.new_project_key,
-        name='sentry-new-project-key'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/keys/(?P<key_id>\d+)/remove/$',
-        sentry.web.frontend.projects.keys.remove_project_key,
-        name='sentry-remove-project-key'),
-
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/plugins/$',
-        sentry.web.frontend.projects.plugins.manage_plugins,
-        name='sentry-manage-project-plugins'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/plugins/(?P<slug>[\w_-]+)/$',
-        sentry.web.frontend.projects.plugins.configure_project_plugin,
-        name='sentry-configure-project-plugin'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/plugins/(?P<slug>[\w_-]+)/reset/$',
-        sentry.web.frontend.projects.plugins.reset_project_plugin,
-        name='sentry-reset-project-plugin'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/plugins/(?P<slug>[\w_-]+)/disable/$',
-        sentry.web.frontend.projects.plugins.disable_project_plugin,
-        name='sentry-disable-project-plugin'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/plugins/(?P<slug>[\w_-]+)/enable/$',
-        sentry.web.frontend.projects.plugins.enable_project_plugin,
-        name='sentry-enable-project-plugin'),
-
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/remove/$',
-        sentry.web.frontend.projects.remove.remove_project,
-        name='sentry-remove-project'),
-
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/tags/$',
-        sentry.web.frontend.projects.tags.manage_project_tags,
-        name='sentry-manage-project-tags'),
-
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/quotas/$',
-        sentry.web.frontend.projects.quotas.manage_project_quotas,
-        name='sentry-manage-project-quotas'),
-
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/notifications/$',
-        sentry.web.frontend.projects.notifications.notification_settings,
-        name='sentry-project-notifications'),
-
-    # Generic
-    url(r'^$', generic.dashboard,
-        name='sentry'),
-
     # Admin
-    url(r'^manage/status/$', admin.status_env,
+    url(r'^manage/queue/$', AdminQueueView.as_view(),
+        name='sentry-admin-queue'),
+    url(r'^manage/status/environment/$', admin.status_env,
         name='sentry-admin-status'),
     url(r'^manage/status/packages/$', admin.status_packages,
         name='sentry-admin-packages-status'),
     url(r'^manage/status/mail/$', admin.status_mail,
         name='sentry-admin-mail-status'),
-    url(r'^manage/stats/$', admin.stats,
-        name='sentry-admin-stats'),
 
     # Admin - Teams
     url(r'^manage/teams/$', admin.manage_teams,
@@ -209,122 +210,185 @@ urlpatterns = patterns('',
     url(r'^manage/plugins/(?P<slug>[\w_-]+)/$', admin.configure_plugin,
         name='sentry-admin-configure-plugin'),
 
-    # API / JS
-    url(r'^crossdomain\.xml$', api.crossdomain_xml_index,
-        name='sentry-api-crossdomain-xml-index'),
-    url(r'^api/store/$', api.StoreView.as_view(),
-        name='sentry-api-store'),
+    url(r'^manage/', react_page_view,
+        name='sentry-admin-overview'),
 
-    # Client API endpoints. MUST NOT BE CHANGED
-    url(r'^api/(?P<project_id>[\w_-]+)/crossdomain\.xml$', api.crossdomain_xml,
-        name='sentry-api-crossdomain-xml'),
-    url(r'^api/(?P<project_id>[\w_-]+)/store/$', api.StoreView.as_view(),
-        name='sentry-api-store'),
+    # Legacy Redirects
+    url(r'^docs/?$',
+        RedirectView.as_view(url='https://docs.getsentry.com/hosted/', permanent=False),
+        name='sentry-docs-redirect'),
+    url(r'^api/?$',
+        RedirectView.as_view(url='https://docs.getsentry.com/hosted/api/', permanent=False),
+        name='sentry-api-docs-redirect'),
+    url(r'^docs/api/?$',
+        RedirectView.as_view(url='https://docs.getsentry.com/hosted/api/', permanent=False),
+        name='sentry-api-docs-redirect'),
 
-    # Generic API
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/poll/$', api.poll,
-        name='sentry-api-poll'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/resolve/$', api.resolve,
-        name='sentry-api-resolve'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/bookmark/$', api.bookmark,
-        name='sentry-api-bookmark'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/clear/$', api.clear,
-        name='sentry-api-clear'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?:(?P<project_id>[\w_-]+)/)?chart/$', api.chart,
-        name='sentry-api-chart'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>[\w_-]+)/remove/$', api.remove_group,
-        name='sentry-api-remove-group'),
+    # Organizations
+    url(r'^(?P<organization_slug>[\w_-]+)/$', react_page_view,
+        name='sentry-organization-home'),
+    url(r'^organizations/new/$', CreateOrganizationView.as_view(),
+        name='sentry-create-organization'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/api-keys/$', OrganizationApiKeysView.as_view(),
+        name='sentry-organization-api-keys'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/api-keys/(?P<key_id>[\w_-]+)/$', OrganizationApiKeySettingsView.as_view(),
+        name='sentry-organization-api-key-settings'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/auth/$', OrganizationAuthSettingsView.as_view(),
+        name='sentry-organization-auth-settings'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/audit-log/$', OrganizationAuditLogView.as_view(),
+        name='sentry-organization-audit-log'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/members/$', OrganizationMembersView.as_view(),
+        name='sentry-organization-members'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/members/new/$', CreateOrganizationMemberView.as_view(),
+        name='sentry-create-organization-member'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/members/(?P<member_id>\d+)/$', OrganizationMemberSettingsView.as_view(),
+        name='sentry-organization-member-settings'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/stats/$', react_page_view,
+        name='sentry-organization-stats'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/settings/$', OrganizationSettingsView.as_view(),
+        name='sentry-organization-settings'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/teams/(?P<team_slug>[\w_-]+)/settings/$', TeamSettingsView.as_view(),
+        name='sentry-manage-team'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/teams/(?P<team_slug>[\w_-]+)/remove/$', RemoveTeamView.as_view(),
+        name='sentry-remove-team'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/teams/new/$', CreateTeamView.as_view(),
+        name='sentry-create-team'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/projects/new/$', CreateProjectView.as_view(),
+        name='sentry-create-project'),
+    url(r'^organizations/(?P<organization_slug>[\w_-]+)/remove/$', RemoveOrganizationView.as_view(),
+        name='sentry-remove-organization'),
+    url(r'^accept/(?P<member_id>\d+)/(?P<token>\w+)/$', AcceptOrganizationInviteView.as_view(),
+        name='sentry-accept-invite'),
 
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?:(?P<project_id>[\w_-]+)/)?groups/trends/$', api.get_group_trends,
-        name='sentry-api-groups-trends'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?:(?P<project_id>[\w_-]+)/)?groups/newest/$', api.get_new_groups,
-        name='sentry-api-groups-new'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?:(?P<project_id>[\w_-]+)/)?groups/resolved/$', api.get_resolved_groups,
-        name='sentry-api-groups-resolved'),
+    # Settings - Projects
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/$',
+        ProjectSettingsView.as_view(),
+        name='sentry-manage-project'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/issue-tracking/$',
+        ProjectIssueTrackingView.as_view(),
+        name='sentry-project-issue-tracking'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/release-tracking/$',
+        ProjectReleaseTrackingView.as_view(),
+        name='sentry-project-release-tracking'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/keys/$',
+        ProjectKeysView.as_view(),
+        name='sentry-manage-project-keys'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/keys/new/$',
+        CreateProjectKeyView.as_view(),
+        name='sentry-new-project-key'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/keys/(?P<key_id>\d+)/edit/$',
+        EditProjectKeyView.as_view(),
+        name='sentry-edit-project-key'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/keys/(?P<key_id>\d+)/remove/$',
+        RemoveProjectKeyView.as_view(),
+        name='sentry-remove-project-key'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/keys/(?P<key_id>\d+)/disable/$',
+        DisableProjectKeyView.as_view(),
+        name='sentry-disable-project-key'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/keys/(?P<key_id>\d+)/enable/$',
+        EnableProjectKeyView.as_view(),
+        name='sentry-enable-project-key'),
 
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>[\w_-]+)/set/public/$', api.make_group_public,
-        name='sentry-api-set-group-public'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>[\w_-]+)/set/private/$', api.make_group_private, name='sentry-api-set-group-private'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>[\w_-]+)/set/resolved/$', api.resolve_group,
-        name='sentry-api-set-group-resolve'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>[\w_-]+)/set/muted/$', api.mute_group,
-        name='sentry-api-set-group-mute'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>[\w_-]+)/set/unresolved/$', api.unresolve_group,
-        name='sentry-api-set-group-unresolve'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?:(?P<project_id>[\w_-]+)/)?stats/$', api.get_stats,
-        name='sentry-api-stats'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/tags/search/$', api.search_tags,
-        name='sentry-api-search-tags'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/users/search/$', api.search_users,
-        name='sentry-api-search-users'),
-    url(r'^api/(?P<team_slug>[\w_-]+)/projects/search/$', api.search_projects,
-        name='sentry-api-search-projects'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/plugins/$',
+        ProjectPluginsView.as_view(),
+        name='sentry-manage-project-plugins'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/plugins/(?P<slug>[\w_-]+)/$',
+        ProjectPluginConfigureView.as_view(),
+        name='sentry-configure-project-plugin'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/plugins/(?P<slug>[\w_-]+)/reset/$',
+        ProjectPluginResetView.as_view(),
+        name='sentry-reset-project-plugin'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/plugins/(?P<slug>[\w_-]+)/disable/$',
+        ProjectPluginDisableView.as_view(),
+        name='sentry-disable-project-plugin'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/plugins/(?P<slug>[\w_-]+)/enable/$',
+        ProjectPluginEnableView.as_view(),
+        name='sentry-enable-project-plugin'),
 
-    # TV dashboard
-    url(r'^(?P<team_slug>[\w_-]+)/wall/$', groups.wall_display,
-        name='sentry-wall'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/remove/$',
+        RemoveProjectView.as_view(),
+        name='sentry-remove-project'),
 
-    # Team-wide alerts
-    url(r'^(?P<team_slug>[\w_-]+)/show/alerts/$', alerts.alert_list,
-        name='sentry-alerts'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/tags/$',
+        ProjectTagsView.as_view(),
+        name='sentry-manage-project-tags'),
 
-    # Explore - Users
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/explore/users/$',
-        users.user_list, name='sentry-users'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/explore/users/(?P<user_id>\d+)/$', users.user_details, name='sentry-user-details'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/quotas/$',
+        ProjectQuotasView.as_view(),
+        name='sentry-manage-project-quotas'),
 
-    # Explore - Code
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/explore/code/$', explore_code.list_tag,
-        {'selection': 'filenames'}, name='sentry-explore-code'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/explore/code/by/function/$', explore_code.list_tag,
-        {'selection': 'functions'}, name='sentry-explore-code-by-function'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/explore/code/by/filename/(?P<tag_id>\d+)/$',
-        explore_code.tag_details, {'selection': 'filenames'}, name='sentry-explore-code-details'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/explore/code/by/function/(?P<tag_id>\d+)/$',
-        explore_code.tag_details, {'selection': 'functions'}, name='sentry-explore-code-details-by-function'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/notifications/$',
+        ProjectNotificationsView.as_view(),
+        name='sentry-project-notifications'),
 
-    # Explore
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/explore/$', explore.tag_list,
-        name='sentry-explore'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/explore/(?P<key>[^\/]+)/$', explore.tag_value_list,
-        name='sentry-explore-tag'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/explore/(?P<key>[^\/]+)/(?P<value_id>\d+)/$', explore.tag_value_details,
-        name='sentry-explore-tag-value'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/rules/$',
+        ProjectRulesView.as_view(),
+        name='sentry-project-rules'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/rules/(?P<rule_id>\d+)/edit/$',
+        ProjectRuleEditView.as_view(),
+        name='sentry-edit-project-rule'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/rules/(?P<rule_id>\d+)/remove/$',
+        ProjectRuleRemoveView.as_view(),
+        name='sentry-remove-project-rule'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/rules/new/$',
+        ProjectRuleEditView.as_view(),
+        name='sentry-new-project-rule'),
 
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/$', groups.group,
-        name='sentry-group'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/events/$', groups.group_event_list,
-        name='sentry-group-events'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/events/json/$', groups.group_event_list_json,
-        name='sentry-group-events-json'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/events/(?P<event_id>\d+)/$', groups.group,
-        name='sentry-group-event'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/events/(?P<event_id>\d+)/replay/$', events.replay_event,
-        name='sentry-replay'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/events/(?P<event_id_or_latest>(\d+|latest))/json/$', groups.group_event_details_json,
-        name='sentry-group-event-json'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/actions/(?P<slug>[\w_-]+)/', groups.group_plugin_action,
-        name='sentry-group-plugin-action'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/tags/$', groups.group_tag_list,
-        name='sentry-group-tags'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/tags/(?P<tag_name>[^/]+)/$', groups.group_tag_details,
-        name='sentry-group-tag-details'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/search/$', groups.search,
-        name='sentry-search'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/alerts/$', alerts.alert_list,
-        name='sentry-alerts'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/alerts/(?P<alert_id>\d+)/$', alerts.alert_details,
-        name='sentry-alert-details'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/alerts/(?P<alert_id>\d+)/resolve/$', alerts.resolve_alert,
-        name='sentry-resolve-alert'),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/stream/$', groups.group_list),
-    url(r'^(?P<team_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/$', groups.group_list,
-        name='sentry-stream'),
-
-    url(r'^(?P<team_slug>[\w_-]+)/$', groups.dashboard,
+    # Generic
+    url(r'^$', HomeView.as_view(),
         name='sentry'),
 
-    # Legacy
-    url(r'^(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/$', groups.redirect_to_group,
+    url(r'^robots\.txt$', api.robots_txt,
+        name='sentry-api-robots-txt'),
+
+    # crossdomain.xml
+    url(r'^crossdomain\.xml$', api.crossdomain_xml_index,
+        name='sentry-api-crossdomain-xml-index'),
+    url(r'^api/(?P<project_id>[\w_-]+)/crossdomain\.xml$', api.crossdomain_xml,
+        name='sentry-api-crossdomain-xml'),
+
+    # plugins
+    url(r'^plugins/', include('sentry.plugins.base.urls')),
+
+    # Generic API
+    url(r'^share/group/(?P<share_id>[\w_-]+)/$', GenericReactPageView.as_view(auth_required=False),
+        name='sentry-group-shared'),
+
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/$', react_page_view,
         name='sentry-group'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/activity/$', react_page_view,
+        name='sentry-group-activity'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/events/$', react_page_view,
+        name='sentry-group-events'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/events/(?P<event_id>\d+)/$', react_page_view,
+        name='sentry-group-event'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/group/(?P<group_id>\d+)/events/(?P<event_id>\d+)/replay/$', ReplayEventView.as_view(),
+        name='sentry-replay'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/group/(?P<group_id>\d+)/events/(?P<event_id_or_latest>(\d+|latest))/json/$', GroupEventJsonView.as_view(),
+        name='sentry-group-event-json'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/group/(?P<group_id>\d+)/actions/(?P<slug>[\w_-]+)/', GroupPluginActionView.as_view(),
+        name='sentry-group-plugin-action'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/tags/$', react_page_view,
+        name='sentry-group-tags'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/tags/(?P<tag_name>[^/]+)/$', react_page_view,
+        name='sentry-group-tag-details'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/releases/$', react_page_view,
+        name='sentry-releases'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/releases/(?P<version>[^\/]+)/$', react_page_view,
+        name='sentry-release-details'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/releases/(?P<version>[^\/]+)/all-events/$', react_page_view,
+        name='sentry-release-details-all-events'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/releases/(?P<version>[^\/]+)/artifacts/$', react_page_view,
+        name='sentry-release-details-artifacts'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/dashboard/$', react_page_view,
+        name='sentry-dashboard'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/events/$', react_page_view,
+        name='sentry-events'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/settings/install/$', react_page_view,
+        name='sentry-project-setup'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/$', react_page_view,
+        name='sentry-stream'),
+
+    # Legacy
+    url(r'', react_page_view),
 )

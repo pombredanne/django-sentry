@@ -2,22 +2,24 @@
 sentry.db.models.fields.gzippeddict
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
 
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function
 
 import logging
+import six
 
 from django.db import models
+from south.modelsinspector import add_introspection_rules
 
 from sentry.utils.compat import pickle
 from sentry.utils.strings import decompress, compress
 
 __all__ = ('GzippedDictField',)
 
-logger = logging.getLogger('sentry.errors')
+logger = logging.getLogger('sentry')
 
 
 class GzippedDictField(models.TextField):
@@ -28,10 +30,10 @@ class GzippedDictField(models.TextField):
     __metaclass__ = models.SubfieldBase
 
     def to_python(self, value):
-        if isinstance(value, basestring) and value:
+        if isinstance(value, six.string_types) and value:
             try:
                 value = pickle.loads(decompress(value))
-            except Exception, e:
+            except Exception as e:
                 logger.exception(e)
                 return {}
         elif not value:
@@ -42,15 +44,14 @@ class GzippedDictField(models.TextField):
         if not value and self.null:
             # save ourselves some storage
             return None
+        # enforce unicode strings to guarantee consistency
+        if isinstance(value, str):
+            value = six.text_type(value)
         return compress(pickle.dumps(value))
 
     def value_to_string(self, obj):
         value = self._get_val_from_obj(obj)
         return self.get_prep_value(value)
 
-    def south_field_triple(self):
-        "Returns a suitable description of this field for South."
-        from south.modelsinspector import introspector
-        field_class = "django.db.models.fields.TextField"
-        args, kwargs = introspector(self)
-        return (field_class, args, kwargs)
+
+add_introspection_rules([], ["^sentry\.db\.models\.fields\.gzippeddict\.GzippedDictField"])

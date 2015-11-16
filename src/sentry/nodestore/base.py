@@ -2,16 +2,26 @@
 sentry.nodestore.base
 ~~~~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
 
 from __future__ import absolute_import
 
-import uuid
+from base64 import b64encode
+from threading import local
+from uuid import uuid4
 
 
-class NodeStorage(object):
+class NodeStorage(local):
+    def validate(self):
+        """
+        Validates the settings for this backend (i.e. such as proper connection
+        info).
+
+        Raise ``InvalidConfiguration`` if there is a configuration error.
+        """
+
     def create(self, data):
         """
         >>> key = nodestore.create({'foo': 'bar'})
@@ -25,6 +35,18 @@ class NodeStorage(object):
         >>> nodestore.delete('key1')
         """
         raise NotImplementedError
+
+    def delete_multi(self, id_list):
+        """
+        Delete multiple nodes.
+
+        Note: This is not guaranteed to be atomic and may result in a partial
+        delete.
+
+        >>> delete_multi(['key1', 'key2'])
+        """
+        for id in id_list:
+            self.delete(id)
 
     def get(self, id):
         """
@@ -61,7 +83,7 @@ class NodeStorage(object):
             self.set(id=id, data=data)
 
     def generate_id(self):
-        return uuid.uuid4().hex
+        return b64encode(uuid4().bytes)
 
     def cleanup(self, cutoff_timestamp):
         raise NotImplementedError

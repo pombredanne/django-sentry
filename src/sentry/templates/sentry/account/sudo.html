@@ -1,0 +1,57 @@
+{% extends "sentry/bases/modal.html" %}
+
+{% load crispy_forms_tags %}
+{% load i18n %}
+
+{% block title %}{% trans "Confirm Password" %} | {{ block.super }}{% endblock %}
+
+{% block wrapperclass %}{{block.super }} windowed-small{% endblock %}
+
+{% block header %}
+
+{% endblock %}
+
+{% block scripts %}
+
+  {{ block.super }}
+
+  <script type="text/javascript">
+    $(function() {
+      setTimeout(function(){
+          $("#id_password").focus();
+      }, 0);
+    });
+  </script>
+{% endblock %}
+
+{% block content %}
+    <div class="box">
+        <div class="box-header">
+            <h3>
+            {% blocktrans %}Help us keep your account safe by confirming your password.{% endblocktrans %}
+            </h3>
+        </div>
+        <div class="box-content with-padding">
+            <form action="" method="post" autocomplete="off">
+                {% csrf_token %}
+
+                {% if form.password.errors %}
+                    <div class="help-block error">{% trans "Your password was not valid." %}</div>
+                {% endif %}
+
+                <div class="form-group">
+                    <label class="control-label" for="id_password">
+                        Password:
+                    </label>
+                    <input type="password" name="password" placeholder="Password" id="id_password" class="form-control">
+                    <p class="help-block">
+                        <a href="{% url 'sentry-account-recover' %}">Forgot your password?</a>
+                    </p>
+                </div>
+                <p>
+                    <button type="submit" class="btn btn-primary">{% trans "Continue" %}</button>
+                </p>
+            </form>
+        </div>
+    </div>
+{% endblock %}

@@ -2,16 +2,18 @@
 sentry
 ~~~~~~
 
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
+from __future__ import absolute_import
+
 import os
 import os.path
 
 try:
     VERSION = __import__('pkg_resources') \
         .get_distribution('sentry').version
-except Exception, e:
+except Exception as e:
     VERSION = 'unknown'
 
 
@@ -21,7 +23,7 @@ def _get_git_revision(path):
         return None
     fh = open(revision_file, 'r')
     try:
-        return fh.read().strip()[:7]
+        return fh.read().strip()
     finally:
         fh.close()
 
@@ -40,10 +42,10 @@ def get_revision():
 
 
 def get_version():
-    base = VERSION
     if __build__:
-        base = '%s (%s)' % (base, __build__)
-    return base
+        return '%s.%s' % (__version__, __build__)
+    return __version__
 
+__version__ = VERSION
 __build__ = get_revision()
 __docformat__ = 'restructuredtext en'
