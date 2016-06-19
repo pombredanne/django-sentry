@@ -8,9 +8,7 @@ from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext_lazy as _
 from uuid import uuid1
 
-from sentry.models import (
-    AuditLogEntry, AuditLogEntryEvent, Project, Team
-)
+from sentry.models import AuditLogEntryEvent, Project, Team
 from sentry.web.forms.fields import (
     CustomTypedChoiceField, RangeField, OriginsField, IPNetworksField,
 )
@@ -23,6 +21,10 @@ BLANK_CHOICE = [("", "")]
 class EditProjectForm(forms.ModelForm):
     name = forms.CharField(label=_('Project Name'), max_length=200,
         widget=forms.TextInput(attrs={'placeholder': _('Production')}))
+    slug = forms.SlugField(
+        label=_('Short name'),
+        help_text=_('A unique ID used to identify this project.'),
+    )
     team = CustomTypedChoiceField(choices=(), coerce=int, required=False)
     origins = OriginsField(label=_('Allowed Domains'), required=False,
         help_text=_('Separate multiple entries with a newline.'))
@@ -30,10 +32,15 @@ class EditProjectForm(forms.ModelForm):
         help_text=_('Outbound requests matching Allowed Domains will have the header "X-Sentry-Token: {token}" appended.'))
     resolve_age = RangeField(label=_('Auto resolve'), required=False,
         min_value=0, max_value=168, step_value=1,
-        help_text=_('Treat an event as resolved if it hasn\'t been seen for this amount of time.'))
+        help_text=_('Automatically resolve an issue if it hasn\'t been seen for this amount of time.'))
     scrub_data = forms.BooleanField(
         label=_('Data Scrubber'),
-        help_text=_('Apply server-side data scrubbing to prevent things like passwords and credit cards from being stored.'),
+        help_text=_('Enable server-side data scrubbing.'),
+        required=False
+    )
+    scrub_defaults = forms.BooleanField(
+        label=_('Use Default Scrubbers'),
+        help_text=_('Apply default scrubbers to prevent things like passwords and credit cards from being stored.'),
         required=False
     )
     sensitive_fields = forms.CharField(
@@ -59,11 +66,24 @@ class EditProjectForm(forms.ModelForm):
     blacklisted_ips = IPNetworksField(label=_('Blacklisted IP Addresses'), required=False,
         help_text=_('Separate multiple entries with a newline.'))
 
+    # Options that are overridden by Organization level settings
+    org_overrides = ('scrub_data', 'scrub_defaults', 'scrub_ip_address')
+
     class Meta:
         fields = ('name', 'team', 'slug')
         model = Project
 
     def __init__(self, request, organization, team_list, data, instance, *args, **kwargs):
+        # First, we need to check for the value overrides from the Organization options
+        # We need to do this before `initial` gets passed into the Form.
+        disabled = []
+        if 'initial' in kwargs:
+            for opt in self.org_overrides:
+                value = bool(organization.get_option('sentry:require_%s' % (opt,), False))
+                if value:
+                    disabled.append(opt)
+                    kwargs['initial'][opt] = value
+
         super(EditProjectForm, self).__init__(data=data, instance=instance, *args, **kwargs)
 
         self.organization = organization
@@ -71,6 +91,11 @@ class EditProjectForm(forms.ModelForm):
 
         self.fields['team'].choices = self.get_team_choices(team_list, instance.team)
         self.fields['team'].widget.choices = self.fields['team'].choices
+
+        # After the Form is initialized, we now need to disable the fields that have been
+        # overridden from Organization options.
+        for opt in disabled:
+            self.fields[opt].widget.attrs['disabled'] = 'disabled'
 
     def get_team_label(self, team):
         return '%s (%s)' % (team.name, team.slug)
@@ -122,12 +147,13 @@ class EditProjectForm(forms.ModelForm):
         slug = self.cleaned_data.get('slug')
         if not slug:
             return
-        exists_qs = Project.objects.filter(
+        other = Project.objects.filter(
             slug=slug,
             organization=self.organization
-        ).exclude(id=self.instance.id)
-        if exists_qs.exists():
-            raise forms.ValidationError('Another project is already using that slug')
+        ).exclude(id=self.instance.id).first()
+        if other is not None:
+            raise forms.ValidationError('Another project (%s) is already '
+                                        'using that slug' % other.name)
         return slug
 
 
@@ -152,11 +178,13 @@ class ProjectSettingsView(ProjectView):
 
         return EditProjectForm(
             request, organization, team_list, request.POST or None,
-            instance=project, initial={
+            instance=project,
+            initial={
                 'origins': '\n'.join(project.get_option('sentry:origins', ['*'])),
                 'token': security_token,
                 'resolve_age': int(project.get_option('sentry:resolve_age', 0)),
                 'scrub_data': bool(project.get_option('sentry:scrub_data', True)),
+                'scrub_defaults': bool(project.get_option('sentry:scrub_defaults', True)),
                 'sensitive_fields': '\n'.join(project.get_option('sentry:sensitive_fields', None) or []),
                 'scrub_ip_address': bool(project.get_option('sentry:scrub_ip_address', False)),
                 'scrape_javascript': bool(project.get_option('sentry:scrape_javascript', True)),
@@ -169,18 +197,30 @@ class ProjectSettingsView(ProjectView):
 
         if form.is_valid():
             project = form.save()
-            for opt in ('origins', 'resolve_age', 'scrub_data', 'sensitive_fields',
-                        'scrape_javascript', 'scrub_ip_address', 'token', 'blacklisted_ips'):
+            for opt in (
+                    'origins',
+                    'token',
+                    'resolve_age',
+                    'scrub_data',
+                    'scrub_defaults',
+                    'sensitive_fields',
+                    'scrub_ip_address',
+                    'scrape_javascript',
+                    'blacklisted_ips'):
+                # Value can't be overridden if set on the org level
+                if opt in form.org_overrides and organization.get_option('sentry:%s' % (opt,), False):
+                    continue
                 value = form.cleaned_data.get(opt)
                 if value is None:
                     project.delete_option('sentry:%s' % (opt,))
                 else:
                     project.update_option('sentry:%s' % (opt,), value)
 
-            AuditLogEntry.objects.create(
+            project.update_option('sentry:reviewed-callsign', True)
+
+            self.create_audit_entry(
+                request,
                 organization=organization,
-                actor=request.user,
-                ip_address=request.META['REMOTE_ADDR'],
                 target_object=project.id,
                 event=AuditLogEntryEvent.PROJECT_EDIT,
                 data=project.get_audit_log_data(),

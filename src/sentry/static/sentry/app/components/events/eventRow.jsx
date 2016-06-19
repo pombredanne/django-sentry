@@ -1,12 +1,14 @@
 import React from 'react';
 import Router from 'react-router';
 import EventStore from '../../stores/eventStore';
-import Gravatar from '../gravatar';
+import Avatar from '../avatar';
 import TimeSince from '../timeSince';
 
 const EventRow = React.createClass({
   propTypes: {
-    id: React.PropTypes.string.isRequired
+    id: React.PropTypes.string.isRequired,
+    orgSlug: React.PropTypes.string.isRequired,
+    projectSlug: React.PropTypes.string.isRequired
   },
 
   getInitialState() {
@@ -29,7 +31,7 @@ const EventRow = React.createClass({
 
   render() {
     let event = this.state.event;
-    let eventLink = `/${this.props.orgSlug}/${this.props.projectSlug}/groups/${event.groupID}/events/${event.id}/`;
+    let eventLink = `/${this.props.orgSlug}/${this.props.projectSlug}/issues/${event.groupID}/events/${event.id}/`;
 
     let tagList = [];
     for (let key in event.tags) {
@@ -49,7 +51,7 @@ const EventRow = React.createClass({
         <td className="event-user table-user-info">
           {event.user ?
             <div>
-              <Gravatar email={event.user.email} size={64} className="avatar" />
+              <Avatar user={event.user} size={64} className="avatar" />
               {event.user.email}
             </div>
           :

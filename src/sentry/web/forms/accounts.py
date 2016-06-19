@@ -123,8 +123,6 @@ class AuthenticationForm(CaptchaForm):
                     self.error_messages['invalid_login'] % {
                         'username': self.username_field.verbose_name
                     })
-            elif not self.user_cache.is_active:
-                raise forms.ValidationError(self.error_messages['inactive'])
         self.check_for_test_cookie()
         return self.cleaned_data
 
@@ -254,7 +252,7 @@ class NotificationSettingsForm(forms.Form):
 class AccountSettingsForm(forms.Form):
     username = forms.CharField(label=_('Username'), max_length=128)
     email = forms.EmailField(label=_('Email'))
-    first_name = forms.CharField(required=True, label=_('Name'), max_length=30)
+    name = forms.CharField(required=True, label=_('Name'), max_length=30)
     new_password = forms.CharField(label=_('New password'), widget=forms.PasswordInput, required=False)
 
     def __init__(self, user, *args, **kwargs):
@@ -263,8 +261,8 @@ class AccountSettingsForm(forms.Form):
 
         if self.user.is_managed:
             # username and password always managed, email and
-            # first_name optionally managed
-            for field in ('email', 'first_name', 'username'):
+            # name optionally managed
+            for field in ('email', 'name', 'username'):
                 if field == 'username' or field in settings.SENTRY_MANAGED_USER_FIELDS:
                     self.fields[field] = ReadOnlyTextField(label=self.fields[field].label)
             # don't show password field at all
@@ -276,7 +274,7 @@ class AccountSettingsForm(forms.Form):
 
     def is_readonly(self):
         if self.user.is_managed:
-            return set(('email', 'first_name')) == set(settings.SENTRY_MANAGED_USER_FIELDS)
+            return set(('email', 'name')) == set(settings.SENTRY_MANAGED_USER_FIELDS)
         return False
 
     def _clean_managed_field(self, field):
@@ -288,8 +286,8 @@ class AccountSettingsForm(forms.Form):
     def clean_email(self):
         return self._clean_managed_field('email')
 
-    def clean_first_name(self):
-        return self._clean_managed_field('first_name')
+    def clean_name(self):
+        return self._clean_managed_field('name')
 
     def clean_username(self):
         value = self._clean_managed_field('username')
@@ -300,7 +298,7 @@ class AccountSettingsForm(forms.Form):
     def save(self, commit=True):
         if self.cleaned_data.get('new_password'):
             self.user.set_password(self.cleaned_data['new_password'])
-        self.user.first_name = self.cleaned_data['first_name']
+        self.user.name = self.cleaned_data['name']
 
         if self.cleaned_data['email'] != self.user.email:
             new_username = self.user.email == self.user.username
@@ -390,13 +388,7 @@ class ProjectEmailOptionsForm(forms.Form):
 
         super(ProjectEmailOptionsForm, self).__init__(*args, **kwargs)
 
-        is_enabled = UserOption.objects.get_value(
-            user, project, 'mail:alert', None)
-        if is_enabled is None:
-            is_enabled = UserOption.objects.get_value(
-                user, None, 'subscribe_by_default', '1') == '1'
-        else:
-            is_enabled = bool(is_enabled)
+        is_enabled = project.is_user_subscribed_to_mail_alerts(user)
 
         self.fields['alert'].initial = is_enabled
         self.fields['email'].initial = UserOption.objects.get_value(
@@ -415,3 +407,11 @@ class ProjectEmailOptionsForm(forms.Form):
         else:
             UserOption.objects.unset_value(
                 self.user, self.project, 'mail:email')
+
+
+class TwoFactorForm(forms.Form):
+    otp = forms.CharField(
+        label=_('One-time password'), max_length=20, widget=forms.TextInput(
+            attrs={'placeholder': _('Code from authenticator'),
+        }),
+    )

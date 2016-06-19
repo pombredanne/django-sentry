@@ -8,16 +8,18 @@ sentry.tasks.post_process
 
 from __future__ import absolute_import, print_function
 
-from celery.utils.log import get_task_logger
-from django.db import IntegrityError, transaction
+import logging
+
+from django.db import IntegrityError, router, transaction
 from raven.contrib.django.models import client as Raven
 
 from sentry.plugins import plugins
+from sentry.signals import event_processed
 from sentry.tasks.base import instrumented_task
 from sentry.utils import metrics
 from sentry.utils.safe import safe_execute
 
-logger = get_task_logger(__name__)
+logger = logging.getLogger('sentry')
 
 
 def _capture_stats(event, is_new):
@@ -43,15 +45,26 @@ def post_process_group(event, is_new, is_regression, is_sample, **kwargs):
     """
     Fires post processing hooks for a group.
     """
+    # NOTE: we must pass through the full Event object, and not an
+    # event_id since the Event object may not actually have been stored
+    # in the database due to sampling.
     from sentry.models import Project
+    from sentry.models.group import get_group_with_redirect
     from sentry.rules.processor import RuleProcessor
+
+    # Re-bind Group since we're pickling the whole Event object
+    # which may contain a stale Group.
+    event.group, _ = get_group_with_redirect(event.group_id)
+    event.group_id = event.group.id
 
     project_id = event.group.project_id
     Raven.tags_context({
         'project': project_id,
     })
 
-    project = Project.objects.get_from_cache(id=project_id)
+    # Re-bind Project since we're pickling the whole Event object
+    # which may contain a stale Project.
+    event.project = Project.objects.get_from_cache(id=project_id)
 
     _capture_stats(event, is_new)
 
@@ -61,7 +74,7 @@ def post_process_group(event, is_new, is_regression, is_sample, **kwargs):
     for callback, futures in rp.apply():
         safe_execute(callback, event, futures)
 
-    for plugin in plugins.for_project(project):
+    for plugin in plugins.for_project(event.project):
         plugin_post_process_group(
             plugin_slug=plugin.slug,
             event=event,
@@ -70,13 +83,20 @@ def post_process_group(event, is_new, is_regression, is_sample, **kwargs):
             is_sample=is_sample,
         )
 
+    event_processed.send_robust(
+        sender=post_process_group,
+        project=event.project,
+        group=event.group,
+        event=event,
+    )
+
 
 def record_additional_tags(event):
     from sentry.models import Group
 
     added_tags = []
     for plugin in plugins.for_project(event.project, version=2):
-        added_tags.extend(safe_execute(plugin.get_tags, event) or ())
+        added_tags.extend(safe_execute(plugin.get_tags, event, _with_transaction=False) or ())
     if added_tags:
         Group.objects.add_tags(event.group, added_tags)
 
@@ -117,7 +137,7 @@ def record_affected_user(event, **kwargs):
         return
 
     try:
-        with transaction.atomic():
+        with transaction.atomic(using=router.db_for_write(EventUser)):
             euser.save()
     except IntegrityError:
         pass
@@ -125,3 +145,35 @@ def record_affected_user(event, **kwargs):
     Group.objects.add_tags(event.group, [
         ('sentry:user', euser.tag_value)
     ])
+
+
+@instrumented_task(
+    name='sentry.tasks.index_event_tags',
+    default_retry_delay=60 * 5, max_retries=None)
+def index_event_tags(project_id, event_id, tags, group_id=None, **kwargs):
+    from sentry.models import EventTag, Project, TagKey, TagValue
+
+    for key, value in tags:
+        tagkey, _ = TagKey.objects.get_or_create(
+            project=Project(id=project_id),
+            key=key,
+        )
+
+        tagvalue, _ = TagValue.objects.get_or_create(
+            project=Project(id=project_id),
+            key=key,
+            value=value,
+        )
+
+        try:
+            # handle replaying of this task
+            with transaction.atomic():
+                EventTag.objects.create(
+                    project_id=project_id,
+                    group_id=group_id,
+                    event_id=event_id,
+                    key_id=tagkey.id,
+                    value_id=tagvalue.id,
+                )
+        except IntegrityError:
+            pass

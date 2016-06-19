@@ -1,14 +1,20 @@
 import React from 'react';
 import moment from 'moment';
-import api from '../../api';
+import ApiMixin from '../../mixins/apiMixin';
 import BarChart from '../../components/barChart';
 import LoadingError from '../../components/loadingError';
 import LoadingIndicator from '../../components/loadingIndicator';
 import ProjectState from '../../mixins/projectState';
 
 const ProjectChart = React.createClass({
+  propTypes: {
+    dateSince: React.PropTypes.number.isRequired,
+    resolution: React.PropTypes.string.isRequired
+  },
+
   mixins: [
-    ProjectState,
+    ApiMixin,
+    ProjectState
   ],
 
   getInitialState() {
@@ -34,7 +40,7 @@ const ProjectChart = React.createClass({
   getStatsEndpoint() {
     let org = this.getOrganization();
     let project = this.getProject();
-    return '/projects/' + org.slug + '/' + project.slug + '/stats/?resolution=' + this.props.resolution;
+    return '/projects/' + org.slug + '/' + project.slug + '/stats/';
   },
 
   getProjectReleasesEndpoint() {
@@ -44,9 +50,11 @@ const ProjectChart = React.createClass({
   },
 
   fetchData() {
-    api.request(this.getStatsEndpoint(), {
+    this.api.request(this.getStatsEndpoint(), {
       query: {
-        since: this.props.dateSince
+        since: this.props.dateSince,
+        resolution: this.props.resolution,
+        stat: 'generated',
       },
       success: (data) => {
         this.setState({
@@ -63,7 +71,7 @@ const ProjectChart = React.createClass({
       }
     });
 
-    api.request(this.getProjectReleasesEndpoint(), {
+    this.api.request(this.getProjectReleasesEndpoint(), {
       success: (data, _, jqXHR) => {
         this.setState({
           releaseList: data,

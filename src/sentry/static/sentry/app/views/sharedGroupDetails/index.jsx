@@ -2,7 +2,7 @@ import React from 'react';
 import jQuery from 'jquery';
 import DocumentTitle from 'react-document-title';
 
-import api from '../../api';
+import ApiMixin from '../../mixins/apiMixin';
 import EventEntries from '../../components/events/eventEntries';
 import Footer from '../../components/footer';
 import Header from '../../components/header';
@@ -13,10 +13,13 @@ import PropTypes from '../../proptypes';
 import SharedGroupHeader from './sharedGroupHeader';
 
 const SharedGroupDetails = React.createClass({
-
   childContextTypes: {
     group: PropTypes.Group,
   },
+
+  mixins: [
+    ApiMixin
+  ],
 
   getInitialState() {
     return {
@@ -53,7 +56,7 @@ const SharedGroupDetails = React.createClass({
       error: false
     });
 
-    api.request(this.getGroupDetailsEndpoint(), {
+    this.api.request(this.getGroupDetailsEndpoint(), {
       success: (data) => {
         this.setState({
           loading: false,
@@ -71,7 +74,7 @@ const SharedGroupDetails = React.createClass({
   getGroupDetailsEndpoint() {
     let id = this.props.params.shareId;
 
-    return '/shared/groups/' + id + '/';
+    return '/shared/issues/' + id + '/';
   },
 
   render() {
@@ -92,7 +95,12 @@ const SharedGroupDetails = React.createClass({
             <div className="content">
               <SharedGroupHeader group={group} />
               <div className="group-overview">
-                <EventEntries group={group} event={evt} isShare={true} />
+                <EventEntries
+                  group={group}
+                  event={evt}
+                  orgId={group.project.organization.slug}
+                  project={group.project}
+                  isShare={true} />
               </div>
             </div>
           </div>

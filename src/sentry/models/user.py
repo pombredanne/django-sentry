@@ -10,11 +10,13 @@ from __future__ import absolute_import
 import warnings
 
 from django.contrib.auth.models import AbstractBaseUser, UserManager
+from django.core.urlresolvers import reverse
 from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
 from sentry.db.models import BaseManager, BaseModel, BoundedAutoField
+from sentry.utils.http import absolute_uri
 
 
 class UserManager(BaseManager, UserManager):
@@ -24,8 +26,10 @@ class UserManager(BaseManager, UserManager):
 class User(BaseModel, AbstractBaseUser):
     id = BoundedAutoField(primary_key=True)
     username = models.CharField(_('username'), max_length=128, unique=True)
-    first_name = models.CharField(_('first name'), max_length=30, blank=True)
-    last_name = models.CharField(_('last name'), max_length=30, blank=True)
+    # this column is called first_name for legacy reasons, but it is the entire
+    # display name
+    name = models.CharField(_('name'), max_length=200, blank=True,
+                            db_column='first_name')
     email = models.EmailField(_('email address'), blank=True)
     is_staff = models.BooleanField(
         _('staff status'), default=False,
@@ -44,6 +48,13 @@ class User(BaseModel, AbstractBaseUser):
         help_text=_('Designates whether this user should be treated as '
                     'managed. Select this to disallow the user from '
                     'modifying their account (username, password, etc).'))
+    is_password_expired = models.BooleanField(
+        _('password expired'), default=False,
+        help_text=_('If set to true then the user needs to change the '
+                    'password on next sign in.'))
+    last_password_change = models.DateTimeField(
+        _('date of last password change'), null=True,
+        help_text=_('The date the password was changed last.'))
 
     date_joined = models.DateTimeField(_('date joined'), default=timezone.now)
 
@@ -61,6 +72,9 @@ class User(BaseModel, AbstractBaseUser):
     def delete(self):
         if self.username == 'sentry':
             raise Exception('You cannot delete the "sentry" user as it is required by Sentry.')
+        avatar = self.avatar.first()
+        if avatar:
+            avatar.delete()
         return super(User, self).delete()
 
     def save(self, *args, **kwargs):
@@ -70,46 +84,105 @@ class User(BaseModel, AbstractBaseUser):
 
     def has_perm(self, perm_name):
         warnings.warn('User.has_perm is deprecated', DeprecationWarning)
-        from sentry.auth.utils import is_active_superuser
-        return is_active_superuser(self)
+        return self.is_superuser
 
     def has_module_perms(self, app_label):
-        # the admin requires this method
-        from sentry.auth.utils import is_active_superuser
-        return is_active_superuser(self)
+        warnings.warn('User.has_module_perms is deprecated', DeprecationWarning)
+        return self.is_superuser
+
+    def has_unverified_emails(self):
+        return self.emails.filter(is_verified=False).exists()
+
+    def get_label(self):
+        return self.email or self.username or self.id
 
     def get_display_name(self):
-        return self.first_name or self.email or self.username
+        return self.name or self.email or self.username
 
     def get_full_name(self):
-        return self.first_name
+        return self.name
 
     def get_short_name(self):
         return self.username
 
+    def get_avatar_type(self):
+        avatar = self.avatar.first()
+        if avatar:
+            return avatar.get_avatar_type_display()
+        return 'letter_avatar'
+
+    def send_confirm_emails(self, is_new_user=False):
+        from sentry import options
+        from sentry.utils.email import MessageBuilder
+
+        for email in self.emails.filter(is_verified=False):
+            if not email.hash_is_valid():
+                email.set_hash()
+                email.save()
+
+            context = {
+                'user': self,
+                'url': absolute_uri(reverse(
+                    'sentry-account-confirm-email',
+                    args=[self.id, email.validation_hash]
+                )),
+                'is_new_user': is_new_user,
+            }
+            msg = MessageBuilder(
+                subject='%sConfirm Email' % (options.get('mail.subject-prefix'),),
+                template='sentry/emails/confirm_email.txt',
+                type='user.confirm_email',
+                context=context,
+            )
+            msg.send_async([email.email])
+
     def merge_to(from_user, to_user):
         # TODO: we could discover relations automatically and make this useful
+        from sentry import roles
         from sentry.models import (
-            AuditLogEntry, Activity, AuthIdentity, GroupBookmark,
-            OrganizationMember, UserOption
+            AuditLogEntry, Activity, AuthIdentity, GroupAssignee, GroupBookmark,
+            GroupSeen, OrganizationMember, OrganizationMemberTeam, UserAvatar,
+            UserOption
         )
 
         for obj in OrganizationMember.objects.filter(user=from_user):
-            with transaction.atomic():
-                try:
+            try:
+                with transaction.atomic():
                     obj.update(user=to_user)
+            except IntegrityError:
+                pass
+
+            # identify the highest priority membership
+            to_member = OrganizationMember.objects.get(
+                organization=obj.organization_id,
+                user=to_user,
+            )
+            if roles.get(obj.role).priority > roles.get(to_member.role).priority:
+                to_member.update(role=obj.role)
+
+            for team in obj.teams.all():
+                try:
+                    with transaction.atomic():
+                        OrganizationMemberTeam.objects.create(
+                            organizationmember=to_member,
+                            team=team,
+                        )
                 except IntegrityError:
                     pass
-        for obj in GroupBookmark.objects.filter(user=from_user):
-            with transaction.atomic():
+
+        model_list = (
+            GroupAssignee,
+            GroupBookmark,
+            GroupSeen,
+            UserAvatar,
+            UserOption
+        )
+
+        for model in model_list:
+            for obj in model.objects.filter(user=from_user):
                 try:
-                    obj.update(user=to_user)
-                except IntegrityError:
-                    pass
-        for obj in UserOption.objects.filter(user=from_user):
-            with transaction.atomic():
-                try:
-                    obj.update(user=to_user)
+                    with transaction.atomic():
+                        obj.update(user=to_user)
                 except IntegrityError:
                     pass
 
@@ -122,10 +195,20 @@ class User(BaseModel, AbstractBaseUser):
         AuditLogEntry.objects.filter(
             target_user=from_user,
         ).update(target_user=to_user)
+
+        # remove any duplicate identities that exist on the current user that
+        # might conflict w/ the new users existing SSO
+        AuthIdentity.objects.filter(
+            user=from_user,
+            auth_provider__organization__in=AuthIdentity.objects.filter(
+                user=to_user,
+            ).values('auth_provider__organization')
+        ).delete()
         AuthIdentity.objects.filter(
             user=from_user,
         ).update(user=to_user)
 
-    def is_active_superuser(self):
-        # TODO(dcramer): add VPN support via INTERNAL_IPS + ipaddr ranges
-        return self.is_superuser
+    def set_password(self, raw_password):
+        super(User, self).set_password(raw_password)
+        self.last_password_change = timezone.now()
+        self.is_password_expired = False

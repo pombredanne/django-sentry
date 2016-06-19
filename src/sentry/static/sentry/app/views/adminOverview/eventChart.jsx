@@ -1,12 +1,21 @@
 import jQuery from 'jquery';
 import React from 'react';
 
-import api from '../../api';
+import ApiMixin from '../../mixins/apiMixin';
 import FlotChart from '../../components/flotChart';
 import LoadingError from '../../components/loadingError';
 import LoadingIndicator from '../../components/loadingIndicator';
 
 const EventChart = React.createClass({
+  propTypes: {
+    since: React.PropTypes.number.isRequired,
+    resolution: React.PropTypes.string.isRequired
+  },
+
+  mixins: [
+    ApiMixin
+  ],
+
   getInitialState() {
     return {
       error: false,
@@ -33,7 +42,7 @@ const EventChart = React.createClass({
     statNameList.forEach((statName) => {
       // query the organization stats via a separate call as its possible the project stats
       // are too heavy
-      api.request('/internal/stats/', {
+      this.api.request('/internal/stats/', {
         method: 'GET',
         data: {
           since: this.props.since,

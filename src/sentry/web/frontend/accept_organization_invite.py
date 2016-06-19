@@ -6,8 +6,9 @@ from django.core.urlresolvers import reverse
 from django.utils.translation import ugettext_lazy as _
 
 from sentry.models import (
-    AuditLogEntry, AuditLogEntryEvent, OrganizationMember, Project
+    AuditLogEntryEvent, OrganizationMember, Project
 )
+from sentry.signals import member_joined
 from sentry.web.frontend.base import BaseView
 
 ERR_INVITE_INVALID = _('The invite link you followed is not valid.')
@@ -91,10 +92,9 @@ class AcceptOrganizationInviteView(BaseView):
                 om.email = None
                 om.save()
 
-                AuditLogEntry.objects.create(
+                self.create_audit_entry(
+                    request,
                     organization=organization,
-                    actor=request.user,
-                    ip_address=request.META['REMOTE_ADDR'],
                     target_object=om.id,
                     target_user=request.user,
                     event=AuditLogEntryEvent.MEMBER_ACCEPT,
@@ -107,6 +107,8 @@ class AcceptOrganizationInviteView(BaseView):
                         organization.name.encode('utf-8'),
                     )
                 )
+
+                member_joined.send(member=om, sender=self)
 
             request.session.pop('can_register', None)
 

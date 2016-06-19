@@ -13,7 +13,8 @@ __all__ = ('Exception',)
 from django.conf import settings
 
 from sentry.interfaces.base import Interface, InterfaceValidationError
-from sentry.interfaces.stacktrace import Stacktrace
+from sentry.interfaces.stacktrace import Stacktrace, slim_frame_data
+from sentry.utils import json
 from sentry.utils.safe import trim
 
 
@@ -29,7 +30,8 @@ class SingleException(Interface):
     >>>  {
     >>>     "type": "ValueError",
     >>>     "value": "My exception value",
-    >>>     "module": "__builtins__"
+    >>>     "module": "__builtins__",
+    >>>     "mechanism": {},
     >>>     "stacktrace": {
     >>>         # see sentry.interfaces.Stacktrace
     >>>     }
@@ -39,7 +41,7 @@ class SingleException(Interface):
     display_score = 1200
 
     @classmethod
-    def to_python(cls, data, has_system_frames=None):
+    def to_python(cls, data, has_system_frames=None, slim_frames=True):
         if not (data.get('type') or data.get('value')):
             raise InterfaceValidationError("No 'type' or 'value' present")
 
@@ -47,15 +49,45 @@ class SingleException(Interface):
             stacktrace = Stacktrace.to_python(
                 data['stacktrace'],
                 has_system_frames=has_system_frames,
+                slim_frames=slim_frames,
             )
         else:
             stacktrace = None
 
+        if data.get('raw_stacktrace') and data['raw_stacktrace'].get('frames'):
+            raw_stacktrace = Stacktrace.to_python(
+                data['raw_stacktrace'],
+                has_system_frames=has_system_frames,
+                slim_frames=slim_frames,
+            )
+        else:
+            raw_stacktrace = None
+
+        type = data.get('type')
+        value = data.get('value')
+        if not type and ':' in value.split(' ', 1)[0]:
+            type, value = value.split(':', 1)
+            # in case of TypeError: foo (no space)
+            value = value.strip()
+
+        if value is not None and not isinstance(value, basestring):
+            value = json.dumps(value)
+        value = trim(value, 4096)
+
+        mechanism = data.get('mechanism')
+        if mechanism is not None:
+            if not isinstance(mechanism, dict):
+                raise InterfaceValidationError('Bad value for mechanism')
+            mechanism = trim(data.get('mechanism'), 4096)
+            mechanism.setdefault('type', 'generic')
+
         kwargs = {
-            'type': trim(data.get('type'), 128),
-            'value': trim(data.get('value'), 4096),
+            'type': trim(type, 128),
+            'value': value,
             'module': trim(data.get('module'), 128),
+            'mechanism': mechanism,
             'stacktrace': stacktrace,
+            'raw_stacktrace': raw_stacktrace,
         }
 
         return cls(**kwargs)
@@ -66,11 +98,18 @@ class SingleException(Interface):
         else:
             stacktrace = None
 
+        if self.raw_stacktrace:
+            raw_stacktrace = self.raw_stacktrace.to_json()
+        else:
+            raw_stacktrace = None
+
         return {
             'type': self.type,
             'value': self.value,
+            'mechanism': self.mechanism or None,
             'module': self.module,
             'stacktrace': stacktrace,
+            'raw_stacktrace': raw_stacktrace,
         }
 
     def get_api_context(self, is_public=False):
@@ -79,11 +118,18 @@ class SingleException(Interface):
         else:
             stacktrace = None
 
+        if self.raw_stacktrace:
+            raw_stacktrace = self.raw_stacktrace.get_api_context(is_public=is_public)
+        else:
+            raw_stacktrace = None
+
         return {
             'type': self.type,
-            'value': self.value,
+            'value': unicode(self.value) if self.value else None,
+            'mechanism': self.mechanism or None,
             'module': self.module,
             'stacktrace': stacktrace,
+            'rawStacktrace': raw_stacktrace,
         }
 
     def get_alias(self):
@@ -119,7 +165,8 @@ class Exception(Interface):
     >>>     "values": [{
     >>>         "type": "ValueError",
     >>>         "value": "My exception value",
-    >>>         "module": "__builtins__"
+    >>>         "module": "__builtins__",
+    >>>         "mechanism": {},
     >>>         "stacktrace": {
     >>>             # see sentry.interfaces.Stacktrace
     >>>         }
@@ -152,8 +199,6 @@ class Exception(Interface):
         if not data['values']:
             raise InterfaceValidationError("No 'values' present")
 
-        trim_exceptions(data)
-
         has_system_frames = cls.data_has_system_frames(data)
 
         kwargs = {
@@ -161,6 +206,7 @@ class Exception(Interface):
                 SingleException.to_python(
                     v,
                     has_system_frames=has_system_frames,
+                    slim_frames=False,
                 )
                 for v in data['values']
             ],
@@ -173,7 +219,10 @@ class Exception(Interface):
         else:
             kwargs['exc_omitted'] = None
 
-        return cls(**kwargs)
+        instance = cls(**kwargs)
+        # we want to wait to slim things til we've reconciled in_app
+        slim_exception_data(instance)
+        return instance
 
     @classmethod
     def data_has_system_frames(cls, data):
@@ -183,7 +232,11 @@ class Exception(Interface):
             if not exc.get('stacktrace'):
                 continue
 
-            for frame in exc['stacktrace'].get('frames', []):
+            frames = exc['stacktrace'].get('frames')
+            if not frames:
+                continue
+
+            for frame in frames:
                 # XXX(dcramer): handle PHP sending an empty array for a frame
                 if not isinstance(frame, dict):
                     continue
@@ -273,18 +326,17 @@ class Exception(Interface):
         return ''
 
 
-def trim_exceptions(data, max_values=settings.SENTRY_MAX_EXCEPTIONS):
-    # TODO: this doesnt account for cases where the client has already omitted
-    # exceptions
-    values = data['values']
-    exc_len = len(values)
+def slim_exception_data(instance, frame_allowance=settings.SENTRY_MAX_STACKTRACE_FRAMES):
+    """
+    Removes various excess metadata from middle frames which go beyond
+    ``frame_allowance``.
+    """
+    # TODO(dcramer): it probably makes sense to prioritize a certain exception
+    # rather than distributing allowance among all exceptions
+    frames = []
+    for exception in instance.values:
+        if not exception.stacktrace:
+            continue
+        frames.extend(exception.stacktrace.frames)
 
-    if exc_len <= max_values:
-        return
-
-    half_max = max_values / 2
-
-    data['exc_omitted'] = (half_max, exc_len - half_max)
-
-    for n in xrange(half_max, exc_len - half_max):
-        del values[half_max]
+    slim_frame_data(frames, frame_allowance)

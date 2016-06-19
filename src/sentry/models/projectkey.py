@@ -15,10 +15,12 @@ from urlparse import urlparse
 from uuid import uuid4
 
 from django.conf import settings
+from django.core.urlresolvers import reverse
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
+from sentry import options
 from sentry.db.models import (
     Model, BaseManager, BoundedPositiveIntegerField, FlexibleForeignKey,
     sane_repr
@@ -59,6 +61,7 @@ class ProjectKey(Model):
         'project:read',
         'project:write',
         'project:delete',
+        'project:releases',
         'event:read',
         'event:write',
         'event:delete',
@@ -84,10 +87,16 @@ class ProjectKey(Model):
         public_key = urlparts.username
         project_id = urlparts.path.rsplit('/', 1)[-1]
 
-        return ProjectKey.objects.get(
-            public_key=public_key,
-            project=project_id,
-        )
+        try:
+            return ProjectKey.objects.get(
+                public_key=public_key,
+                project=project_id,
+            )
+        except ValueError:
+            # ValueError would come from a non-integer project_id,
+            # which is obviously a DoesNotExist. We catch and rethrow this
+            # so anything downstream expecting DoesNotExist works fine
+            raise ProjectKey.DoesNotExist('ProjectKey matching query does not exist.')
 
     @classmethod
     def get_default(cls, project):
@@ -121,7 +130,11 @@ class ProjectKey(Model):
             key = self.public_key
             url = settings.SENTRY_PUBLIC_ENDPOINT or settings.SENTRY_ENDPOINT
 
-        urlparts = urlparse(url or settings.SENTRY_URL_PREFIX)
+        if url:
+            urlparts = urlparse(url)
+        else:
+            urlparts = urlparse(options.get('system.url-prefix'))
+
         return '%s://%s@%s/%s' % (
             urlparts.scheme,
             key,
@@ -136,6 +149,18 @@ class ProjectKey(Model):
     @property
     def dsn_public(self):
         return self.get_dsn(public=True)
+
+    @property
+    def csp_endpoint(self):
+        endpoint = settings.SENTRY_PUBLIC_ENDPOINT or settings.SENTRY_ENDPOINT
+        if not endpoint:
+            endpoint = options.get('system.url-prefix')
+
+        return '%s%s?sentry_key=%s' % (
+            endpoint,
+            reverse('sentry-api-csp-report', args=[self.project_id]),
+            self.public_key,
+        )
 
     def get_allowed_origins(self):
         from sentry.utils.http import get_origins

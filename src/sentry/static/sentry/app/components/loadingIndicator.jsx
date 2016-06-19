@@ -1,34 +1,26 @@
-import classNames from 'classnames';
 import React from 'react';
+import classNames from 'classnames';
 
-const LoadingIndicator = React.createClass({
-  propTypes: {
-    global: React.PropTypes.bool,
-    mini:  React.PropTypes.bool,
-    triangle: React.PropTypes.bool
-  },
+function LoadingIndicator(props) {
+  let {mini, triangle} = props;
+  let classes = {
+    loading: true,
+    mini,
+    triangle
+  };
 
-  shouldComponentUpdate() {
-    return false;
-  },
+  return (
+    <div className={classNames(props.className, classes)}>
+      <div className="loading-indicator"></div>
+      <div className="loading-message">{props.children}</div>
+    </div>
+  );
+}
 
-  render() {
-    let className = classNames({
-      'loading': true,
-      'mini': this.props.mini,
-      'global': this.props.global,
-      'triangle': this.props.triangle,
-    });
-
-    return (
-      <div className={classNames(this.props.className, className)}>
-        <div className="loading-mask"></div>
-        <div className="loading-indicator"></div>
-        <div className="loading-message">{this.props.children}</div>
-      </div>
-    );
-  }
-});
+LoadingIndicator.propTypes = {
+  mini: React.PropTypes.bool,
+  triangle: React.PropTypes.bool
+};
 
 export default LoadingIndicator;
 

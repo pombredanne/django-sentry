@@ -3,8 +3,10 @@ import GroupEventDataSection from '../eventDataSection';
 import PropTypes from '../../../proptypes';
 import RichHttpContent from './richHttpContent';
 import {getCurlCommand} from './utils';
+import {t} from '../../../locale';
 
 import RequestActions from './requestActions';
+import Truncate from '../../../components/truncate';
 
 const RequestInterface = React.createClass({
   propTypes: {
@@ -61,7 +63,7 @@ const RequestInterface = React.createClass({
 
     if (!this.isPartial()) {
       children.push(
-        <div className="pull-right">
+        <div key="action-buttons" className="pull-right">
           {!this.props.isShare &&
             <RequestActions organization={this.context.organization}
                             project={this.context.project}
@@ -69,19 +71,28 @@ const RequestInterface = React.createClass({
                             event={evt} />
           }
         </div>,
-        <div className="btn-group">
+        <div key="view-buttons" className="btn-group">
           <a className={(view === 'rich' ? 'active' : '') + ' btn btn-default btn-sm'}
-             onClick={this.toggleView.bind(this, 'rich')}>Rich</a>
+            onClick={this.toggleView.bind(this, 'rich')}>{
+              /* Translators: this means "rich" rendering (fancy tables) */
+              t('Rich')}</a>
           <a className={(view === 'curl' ? 'active' : '') + ' btn btn-default btn-sm'}
-             onClick={this.toggleView.bind(this, 'curl')}><code>curl</code></a>
+             onClick={this.toggleView.bind(this, 'curl')}><code>{'curl'}</code></a>
         </div>
       );
     }
 
     children.push(
-      <h3>
-        <strong>{data.method || 'GET'} <a href={fullUrl}>{parsedUrl.pathname}</a></strong>
-        <small style={{marginLeft: 20}}>{parsedUrl.hostname}</small>
+      <h3 key="title">
+        <a href={fullUrl} title={fullUrl}>
+          <span className="path"><strong>{data.method || 'GET'}</strong>
+            <Truncate value={parsedUrl.pathname} maxLength={36} leftTrim={true} />
+          </span>
+          <span className="external-icon">
+            <em className="icon-open" />
+          </span>
+        </a>
+        <small style={{marginLeft: 10}} className="host">{parsedUrl.hostname}</small>
       </h3>
     );
 
@@ -95,7 +106,8 @@ const RequestInterface = React.createClass({
           event={evt}
           type={this.props.type}
           title={title}
-          wrapTitle={false}>
+          wrapTitle={false}
+          className="request">
         {view === 'curl' ?
           <pre>{getCurlCommand(data)}</pre>
         :

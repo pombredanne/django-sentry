@@ -1,7 +1,8 @@
 import React from 'react';
 import Reflux from 'reflux';
 import jQuery from 'jquery';
-import api from '../api';
+
+import ApiMixin from '../mixins/apiMixin';
 import GroupListHeader from '../components/groupListHeader';
 import GroupStore from '../stores/groupStore';
 import LoadingError from '../components/loadingError';
@@ -9,13 +10,15 @@ import LoadingIndicator from '../components/loadingIndicator';
 import ProjectState from '../mixins/projectState';
 import StreamGroup from '../components/stream/group';
 import utils from '../utils';
+import {t} from '../locale';
 
 const GroupList = React.createClass({
   propTypes: {
     query: React.PropTypes.string.isRequired,
     canSelectGroups: React.PropTypes.bool,
     orgId: React.PropTypes.string.isRequired,
-    projectId: React.PropTypes.string.isRequired
+    projectId: React.PropTypes.string.isRequired,
+    bulkActions: React.PropTypes.bool.isRequired
   },
 
   contextTypes: {
@@ -25,6 +28,7 @@ const GroupList = React.createClass({
   mixins: [
     ProjectState,
     Reflux.listenTo(GroupStore, 'onGroupChange'),
+    ApiMixin
   ],
 
   getDefaultProps() {
@@ -70,7 +74,7 @@ const GroupList = React.createClass({
       error: false
     });
 
-    api.request(this.getGroupListEndpoint(), {
+    this.api.request(this.getGroupListEndpoint(), {
       success: (data, _, jqXHR) => {
         this._streamManager.push(data);
 
@@ -97,7 +101,7 @@ const GroupList = React.createClass({
     let querystring = jQuery.param(queryParams);
 
     let props = this.props;
-    return '/projects/' + props.orgId + '/' + props.projectId + '/groups/?' + querystring;
+    return '/projects/' + props.orgId + '/' + props.projectId + '/issues/?' + querystring;
   },
 
   onGroupChange() {
@@ -118,7 +122,7 @@ const GroupList = React.createClass({
       return (
         <div className="box empty-stream">
           <span className="icon icon-exclamation"></span>
-          <p>There don't seem to be any events fitting the query.</p>
+          <p>{t('There don\'t seem to be any events fitting the query.')}</p>
         </div>
       );
 
@@ -141,7 +145,7 @@ const GroupList = React.createClass({
                 id={id}
                 orgId={orgId}
                 projectId={projectId}
-                canSelect={this.props.canSelectGroups} 
+                canSelect={this.props.canSelectGroups}
               />
             );
           })}

@@ -4,6 +4,7 @@ from __future__ import absolute_import
 
 from exam import fixture
 
+from sentry.interfaces.base import InterfaceValidationError
 from sentry.interfaces.http import Http
 from sentry.testutils import TestCase
 
@@ -59,6 +60,13 @@ class HttpTest(TestCase):
             query_string={'foo': 'bar'},
         ))
         assert result.query_string == 'foo=bar'
+
+    def test_query_string_as_dict_unicode(self):
+        result = Http.to_python(dict(
+            url='http://example.com',
+            query_string={'foo': u'\N{SNOWMAN}'},
+        ))
+        assert result.query_string == 'foo=%E2%98%83'
 
     def test_data_as_dict(self):
         result = Http.to_python(dict(
@@ -122,3 +130,47 @@ class HttpTest(TestCase):
             headers={'Foo': ['1', '2']},
         ))
         assert result.headers == [('Foo', '1, 2')]
+
+    def test_header_value_str(self):
+        result = Http.to_python(dict(
+            url='http://example.com',
+            headers={'Foo': 1}
+        ))
+        assert result.headers == [('Foo', '1')]
+
+    def test_method(self):
+        with self.assertRaises(InterfaceValidationError):
+            Http.to_python(dict(
+                url='http://example.com',
+                method='1234',
+            ))
+
+        with self.assertRaises(InterfaceValidationError):
+            Http.to_python(dict(
+                url='http://example.com',
+                method='A' * 33,
+            ))
+
+        with self.assertRaises(InterfaceValidationError):
+            Http.to_python(dict(
+                url='http://example.com',
+                method='A',
+            ))
+
+        result = Http.to_python(dict(
+            url='http://example.com',
+            method='TEST',
+        ))
+        assert result.method == 'TEST'
+
+        result = Http.to_python(dict(
+            url='http://example.com',
+            method='FOO-BAR',
+        ))
+        assert result.method == 'FOO-BAR'
+
+        result = Http.to_python(dict(
+            url='http://example.com',
+            method='FOO_BAR',
+        ))
+        assert result.method == 'FOO_BAR'

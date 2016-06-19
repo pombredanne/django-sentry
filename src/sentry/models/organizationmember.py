@@ -7,8 +7,6 @@ sentry.models.organizationmember
 """
 from __future__ import absolute_import, print_function
 
-import logging
-
 from bitfield import BitField
 from django.conf import settings
 from django.core.urlresolvers import reverse
@@ -16,6 +14,7 @@ from django.db import models, transaction
 from django.db.models import F
 from django.utils import timezone
 from hashlib import md5
+from structlog import get_logger
 
 from sentry import roles
 from sentry.db.models import (
@@ -95,6 +94,7 @@ class OrganizationMember(Model):
         assert self.user_id or self.email, \
             'Must set user or email'
         super(OrganizationMember, self).save(*args, **kwargs)
+
         if not self.counter:
             self._set_counter()
 
@@ -147,15 +147,17 @@ class OrganizationMember(Model):
         }
 
         msg = MessageBuilder(
-            subject='Invite to join organization: %s' % (self.organization.name,),
-            template='sentry/emails/member_invite.txt',
+            subject='Join %s in using Sentry' % self.organization.name,
+            template='sentry/emails/member-invite.txt',
+            html_template='sentry/emails/member-invite.html',
+            type='organization.invite',
             context=context,
         )
 
         try:
-            msg.send([self.get_email()])
+            msg.send_async([self.get_email()])
         except Exception as e:
-            logger = logging.getLogger('sentry.mail.errors')
+            logger = get_logger(name='sentry.mail')
             logger.exception(e)
 
     def send_sso_link_email(self):
@@ -164,7 +166,7 @@ class OrganizationMember(Model):
         context = {
             'email': self.email,
             'organization_name': self.organization.name,
-            'url': absolute_uri(reverse('sentry-auth-link-identity', kwargs={
+            'url': absolute_uri(reverse('sentry-auth-organization', kwargs={
                 'organization_slug': self.organization.slug,
             })),
         }
@@ -173,6 +175,7 @@ class OrganizationMember(Model):
             subject='Action Required for %s' % (self.organization.name,),
             template='sentry/emails/auth-link-identity.txt',
             html_template='sentry/emails/auth-link-identity.html',
+            type='organization.auth_link',
             context=context,
         )
         msg.send_async([self.get_email()])
@@ -182,10 +185,19 @@ class OrganizationMember(Model):
             return self.user.get_display_name()
         return self.email
 
+    def get_label(self):
+        if self.user_id:
+            return self.user.get_label()
+        return self.email or self.id
+
     def get_email(self):
         if self.user_id:
             return self.user.email
         return self.email
+
+    def get_avatar_type(self):
+        if self.user_id:
+            return self.user.get_avatar_type()
 
     def get_audit_log_data(self):
         from sentry.models import Team

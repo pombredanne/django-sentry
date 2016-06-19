@@ -3,6 +3,11 @@ import _ from 'underscore';
 
 import StreamTagActions from '../actions/streamTagActions';
 import MemberListStore from './memberListStore';
+
+const getMemberListStoreUsernames = () => {
+  return MemberListStore.getAll().map(user => user.username || user.email);
+};
+
 const StreamTagStore = Reflux.createStore({
   listenables: StreamTagActions,
 
@@ -12,6 +17,7 @@ const StreamTagStore = Reflux.createStore({
   },
 
   reset() {
+    // TODO(mitsuhiko): what do we do with translations here?
     this.tags = {
       is: {
         key: 'is',
@@ -19,14 +25,28 @@ const StreamTagStore = Reflux.createStore({
         values: [
           'resolved',
           'unresolved',
-          'muted'
+          'muted',
+          'assigned',
+          'unassigned'
         ],
         predefined: true
+      },
+      has: {
+        key: 'has',
+        name: 'Has Tag',
+        values: [],
+        predefined: true,
       },
       assigned: {
         key: 'assigned',
         name: 'Assigned To',
-        values: MemberListStore.getAll().map(user => user.username),
+        values: getMemberListStoreUsernames(),
+        predefined: true
+      },
+      bookmarks: {
+        key: 'bookmarks',
+        name: 'Bookmarked By',
+        values: getMemberListStoreUsernames(),
         predefined: true
       }
     };
@@ -64,13 +84,15 @@ const StreamTagStore = Reflux.createStore({
 
       return obj;
     }, {}));
-
+    this.tags.has.values = data.map(tag => tag.key);
     this.trigger(this.tags);
   },
 
   onMemberListStoreChange(members) {
     let assignedTag = this.tags.assigned;
-    assignedTag.values = MemberListStore.getAll().map(user => user.email);
+    assignedTag.values = getMemberListStoreUsernames();
+    assignedTag.values.unshift('me');
+    this.tags.bookmarks.values = assignedTag.values;
     this.trigger(this.tags);
   }
 });

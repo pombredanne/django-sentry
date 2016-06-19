@@ -4,9 +4,11 @@ from __future__ import absolute_import, print_function
 
 import logging
 
-from mock import patch
-
+from datetime import timedelta
 from django.conf import settings
+from django.utils import timezone
+from mock import patch
+from time import time
 
 from sentry.app import tsdb
 from sentry.constants import MAX_CULPRIT_LENGTH, DEFAULT_LOGGER_NAME
@@ -14,7 +16,9 @@ from sentry.event_manager import (
     EventManager, EventUser, get_hashes_for_event, get_hashes_from_fingerprint,
     generate_culprit,
 )
-from sentry.models import Event, Group, GroupStatus, EventMapping
+from sentry.models import (
+    Activity, Event, Group, GroupResolution, GroupStatus, EventMapping, Release
+)
 from sentry.testutils import TestCase, TransactionTestCase
 
 
@@ -30,6 +34,20 @@ class EventManagerTest(TransactionTestCase):
         }
         result.update(kwargs)
         return result
+
+    def test_similar_message_prefix_doesnt_group(self):
+        # we had a regression which caused the default hash to just be
+        # 'event.message' instead of '[event.message]' which caused it to
+        # generate a hash per letter
+        manager = EventManager(self.make_event(message='foo bar'))
+        manager.normalize()
+        event1 = manager.save(1)
+
+        manager = EventManager(self.make_event(message='foo baz'))
+        manager.normalize()
+        event2 = manager.save(1)
+
+        assert event1.group_id != event2.group_id
 
     @patch('sentry.signals.regression_signal.send')
     def test_broken_regression_signal(self, send):
@@ -50,7 +68,9 @@ class EventManagerTest(TransactionTestCase):
         event = manager.save(1)
 
         assert EventMapping.objects.filter(
-            group=event.group, event_id=event_id).exists()
+            group_id=event.group_id,
+            event_id=event_id,
+        ).exists()
 
     def test_tags_as_list(self):
         manager = EventManager(self.make_event(tags=[('foo', 'bar')]))
@@ -111,6 +131,18 @@ class EventManagerTest(TransactionTestCase):
         assert 'sentry.interfaces.User' not in data
 
     def test_platform_is_saved(self):
+        manager = EventManager(self.make_event(**{
+            'sentry.interfaces.AppleCrashReport': {
+                'crash': {},
+                'binary_images': []
+            }
+        }))
+        manager.normalize()
+        event = manager.save(1)
+
+        assert 'sentry.interfacse.AppleCrashReport' not in event.interfaces
+
+    def test_ephemral_interfaces_removed_on_save(self):
         manager = EventManager(self.make_event(platform='python'))
         event = manager.save(1)
 
@@ -151,6 +183,10 @@ class EventManagerTest(TransactionTestCase):
         assert group.times_seen == 2
         assert group.last_seen.replace(microsecond=0) == event.datetime.replace(microsecond=0)
         assert group.message == event2.message
+        assert group.data.get('type') == 'default'
+        assert group.data.get('metadata') == {
+            'title': 'foo bar',
+        }
 
     def test_updates_group_with_fingerprint(self):
         manager = EventManager(self.make_event(
@@ -179,6 +215,7 @@ class EventManagerTest(TransactionTestCase):
             fingerprint=['{{ default }}', 'a' * 32],
         ))
         with self.tasks():
+            manager.normalize()
             event = manager.save(1)
 
         manager = EventManager(self.make_event(
@@ -186,6 +223,7 @@ class EventManagerTest(TransactionTestCase):
             fingerprint=['a' * 32],
         ))
         with self.tasks():
+            manager.normalize()
             event2 = manager.save(1)
 
         assert event.group_id != event2.group_id
@@ -243,6 +281,79 @@ class EventManagerTest(TransactionTestCase):
         group = Group.objects.get(id=group.id)
         assert group.is_resolved()
 
+    @patch('sentry.event_manager.plugin_is_regression')
+    def test_marks_as_unresolved_only_with_new_release(self, plugin_is_regression):
+        plugin_is_regression.return_value = True
+
+        old_release = Release.objects.create(
+            version='a',
+            project=self.project,
+            date_added=timezone.now() - timedelta(minutes=30),
+        )
+
+        manager = EventManager(self.make_event(
+            event_id='a' * 32,
+            checksum='a' * 32,
+            timestamp=time() - 50000,  # need to work around active_at
+            release=old_release.version,
+        ))
+        event = manager.save(1)
+
+        group = event.group
+
+        group.update(status=GroupStatus.RESOLVED)
+
+        resolution = GroupResolution.objects.create(
+            release=old_release,
+            group=group,
+        )
+        activity = Activity.objects.create(
+            group=group,
+            project=group.project,
+            type=Activity.SET_RESOLVED_IN_RELEASE,
+            ident=resolution.id,
+            data={'version': ''},
+        )
+
+        manager = EventManager(self.make_event(
+            event_id='b' * 32,
+            checksum='a' * 32,
+            timestamp=time(),
+            release=old_release.version,
+        ))
+        event = manager.save(1)
+        assert event.group_id == group.id
+
+        group = Group.objects.get(id=group.id)
+        assert group.status == GroupStatus.RESOLVED
+
+        activity = Activity.objects.get(id=activity.id)
+        assert activity.data['version'] == ''
+
+        assert GroupResolution.objects.filter(group=group).exists()
+
+        manager = EventManager(self.make_event(
+            event_id='c' * 32,
+            checksum='a' * 32,
+            timestamp=time(),
+            release='b',
+        ))
+        event = manager.save(1)
+        assert event.group_id == group.id
+
+        group = Group.objects.get(id=group.id)
+        assert group.status == GroupStatus.UNRESOLVED
+
+        activity = Activity.objects.get(id=activity.id)
+        assert activity.data['version'] == 'b'
+
+        assert not GroupResolution.objects.filter(group=group).exists()
+
+        assert Activity.objects.filter(
+            group=group,
+            type=Activity.SET_REGRESSION,
+        ).exists()
+
     @patch('sentry.models.Group.is_resolved')
     def test_unresolves_group_with_auto_resolve(self, mock_is_resolved):
         mock_is_resolved.return_value = False
@@ -277,7 +388,8 @@ class EventManagerTest(TransactionTestCase):
             message='x' * (settings.SENTRY_MAX_MESSAGE_LENGTH + 1),
         ))
         data = manager.normalize()
-        assert len(data['message']) == settings.SENTRY_MAX_MESSAGE_LENGTH
+        assert len(data['sentry.interfaces.Message']['message']) == \
+            settings.SENTRY_MAX_MESSAGE_LENGTH
 
     def test_default_version(self):
         manager = EventManager(self.make_event())
@@ -306,6 +418,31 @@ class EventManagerTest(TransactionTestCase):
         manager = EventManager(self.make_event(logger='foo bar'))
         data = manager.normalize()
         assert data['logger'] == DEFAULT_LOGGER_NAME
+
+    def test_record_frequencies(self):
+        project = self.project
+        manager = EventManager(self.make_event())
+        event = manager.save(project)
+
+        assert tsdb.get_most_frequent(
+            tsdb.models.frequent_issues_by_project,
+            (event.project.id,),
+            event.datetime,
+        ) == {
+            event.project.id: [
+                (event.group_id, 1.0),
+            ],
+        }
+
+        assert tsdb.get_most_frequent(
+            tsdb.models.frequent_projects_by_organization,
+            (event.project.organization_id,),
+            event.datetime,
+        ) == {
+            event.project.organization_id: [
+                (event.project_id, 1.0),
+            ],
+        }
 
     def test_event_user(self):
         manager = EventManager(self.make_event(**{
@@ -354,6 +491,166 @@ class EventManagerTest(TransactionTestCase):
             ident='1',
         ).exists()
         assert 'sentry:user' in dict(event.tags)
+
+    def test_event_user_unicode_identifier(self):
+        manager = EventManager(self.make_event(**{
+            'sentry.interfaces.User': {
+                'username': u'foô'
+            }
+        }))
+        manager.normalize()
+        manager.save(self.project.id)
+        euser = EventUser.objects.get(
+            project=self.project,
+        )
+        assert euser.username == u'foô'
+
+    def test_environment(self):
+        manager = EventManager(self.make_event(**{
+            'environment': 'beta',
+        }))
+        manager.normalize()
+        event = manager.save(self.project.id)
+
+        assert dict(event.tags).get('environment') == 'beta'
+
+    def test_default_fingerprint(self):
+        manager = EventManager(self.make_event())
+        manager.normalize()
+        event = manager.save(self.project.id)
+
+        assert event.data.get('fingerprint') == ['{{ default }}']
+
+    def test_default_event_type(self):
+        manager = EventManager(self.make_event(message='foo bar'))
+        data = manager.normalize()
+        assert data['type'] == 'default'
+        event = manager.save(self.project.id)
+        group = event.group
+        assert group.data.get('type') == 'default'
+        assert group.data.get('metadata') == {
+            'title': 'foo bar',
+        }
+
+    def test_message_event_type(self):
+        manager = EventManager(self.make_event(**{
+            'message': '',
+            'sentry.interfaces.Message': {
+                'formatted': 'foo bar',
+                'message': 'foo %s',
+                'params': ['bar'],
+            }
+        }))
+        data = manager.normalize()
+        assert data['type'] == 'default'
+        event = manager.save(self.project.id)
+        group = event.group
+        assert group.data.get('type') == 'default'
+        assert group.data.get('metadata') == {
+            'title': 'foo bar',
+        }
+
+    def test_error_event_type(self):
+        manager = EventManager(self.make_event(**{
+            'sentry.interfaces.Exception': {
+                'values': [{
+                    'type': 'Foo',
+                    'value': 'bar',
+                }],
+            },
+        }))
+        data = manager.normalize()
+        assert data['type'] == 'error'
+        event = manager.save(self.project.id)
+        group = event.group
+        assert group.data.get('type') == 'error'
+        assert group.data.get('metadata') == {
+            'type': 'Foo',
+            'value': 'bar',
+        }
+
+    def test_csp_event_type(self):
+        manager = EventManager(self.make_event(**{
+            'sentry.interfaces.Csp': {
+                'effective_directive': 'script-src',
+                'blocked_uri': 'http://example.com',
+            },
+        }))
+        data = manager.normalize()
+        assert data['type'] == 'csp'
+        event = manager.save(self.project.id)
+        group = event.group
+        assert group.data.get('type') == 'csp'
+        assert group.data.get('metadata') == {
+            'directive': 'script-src',
+            'uri': 'example.com',
+            'message': "Blocked 'script' from 'example.com'",
+        }
+
+    def test_sdk(self):
+        manager = EventManager(self.make_event(**{
+            'sdk': {
+                'name': 'sentry-unity',
+                'version': '1.0',
+            },
+        }))
+        manager.normalize()
+        event = manager.save(self.project.id)
+
+        assert event.data['sdk'] == {
+            'name': 'sentry-unity',
+            'version': '1.0',
+        }
+
+    def test_no_message(self):
+        # test that the message is handled gracefully
+        manager = EventManager(self.make_event(**{
+            'message': None,
+            'sentry.interfaces.Message': {
+                'message': 'hello world',
+            },
+        }))
+        manager.normalize()
+        event = manager.save(self.project.id)
+
+        assert event.message == 'hello world'
+
+    def test_bad_message(self):
+        # test that the message is handled gracefully
+        manager = EventManager(self.make_event(**{
+            'message': 1234,
+        }))
+        manager.normalize()
+        event = manager.save(self.project.id)
+
+        assert event.message == '1234'
+        assert event.data['sentry.interfaces.Message'] == {
+            'message': '1234',
+        }
+
+    def test_message_attribute_goes_to_interface(self):
+        manager = EventManager(self.make_event(**{
+            'message': 'hello world',
+        }))
+        manager.normalize()
+        event = manager.save(self.project.id)
+        assert event.data['sentry.interfaces.Message'] == {
+            'message': 'hello world',
+        }
+
+    def test_message_attribute_goes_to_formatted(self):
+        manager = EventManager(self.make_event(**{
+            'message': 'world hello',
+            'sentry.interfaces.Message': {
+                'message': 'hello world',
+            },
+        }))
+        manager.normalize()
+        event = manager.save(self.project.id)
+        assert event.data['sentry.interfaces.Message'] == {
+            'message': 'hello world',
+            'formatted': 'world hello',
+        }
 
 
 class GetHashesFromEventTest(TestCase):

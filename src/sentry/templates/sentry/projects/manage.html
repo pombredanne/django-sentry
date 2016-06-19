@@ -8,21 +8,19 @@
 
 {% block wrapperclass %} {{ block.super }} show-rightbar settings white-bg{% endblock %}
 
-{% block controller %}ManageProjectCtrl{% endblock %}
-
 {% block header_action %}
   <ul class="nav nav-tabs">
     <li>
-      <a href="{% url 'sentry-dashboard' project.organization.slug project.slug %}">Dashboard</a>
+      <a href="{% absolute_uri '/{}/{}/dashboard/' project.organization.slug project.slug %}">Dashboard</a>
     </li>
     <li>
-      <a href="{% url 'sentry-stream' project.organization.slug project.slug %}">Issues</a>
+      <a href="{% absolute_uri '/{}/{}/' project.organization.slug project.slug %}">Issues</a>
     </li>
     <li>
-      <a href="{% url 'sentry-releases' project.organization.slug project.slug %}">Releases</a>
+      <a href="{% absolute_uri '/{}/{}/releases/' project.organization.slug project.slug %}">Releases</a>
     </li>
     <li class="active">
-      <a href="{% url 'sentry-manage-project' project.organization.slug project.slug %}">Settings</a>
+      <a href="{% absolute_uri '/{}/{}/settings/' project.organization.slug project.slug %}">Settings</a>
     </li>
   </ul>
 {% endblock %}
@@ -51,7 +49,9 @@
       </div>
       <div class="box-content with-padding">
         {{ form.resolve_age|as_crispy_field }}
+        <p><small><strong>Note: Enabling auto resolve will immediately resolve anything that has not been seen within this period of time. There is no undo!</strong></small></p>
         {{ form.scrub_data|as_crispy_field }}
+        {{ form.scrub_defaults|as_crispy_field }}
         {{ form.sensitive_fields|as_crispy_field }}
         {{ form.scrub_ip_address|as_crispy_field }}
       </div>
@@ -147,6 +147,18 @@
         snap: true
       });
     });
+
+    $.each({{ form.org_overrides|to_json|safe }}, function(n, value) {
+      if ($('#id_' + value).attr('disabled')) {
+        $('<span/>').addClass('disabled-indicator tip')
+          .attr('title', {% filter to_json %}{% trans "This option is enforced by your organization's settings and cannot be customized per-project." %}{% endfilter %})
+          .append(
+            $('<span/>').addClass('icon-question')
+          ).insertBefore('#hint_id_' + value);
+      }
+    });
+
+    $('.tip').tooltip();
   }());
   </script>
 {% endblock %}
@@ -155,7 +167,7 @@
   <h6 class="nav-header">{% trans "Configuration" %}</h6>
   <ul class="nav nav-stacked">
     <li{% if page == 'details' %} class="active"{% endif %}>
-        <a href="{% url 'sentry-manage-project' project.organization.slug project.slug %}">{% trans "Project Settings" %}</a>
+        <a href="{% url 'sentry-manage-project' project.organization.slug project.slug %}">{% trans "General" %}</a>
     </li>
     <li{% if page == 'notifications' %} class="active"{% endif %}>
         <a href="{% url 'sentry-project-notifications' project.organization.slug project.slug %}">{% trans "Notifications" %}</a>
@@ -177,14 +189,30 @@
     <li{% if page == 'release-tracking' %} class="active"{% endif %}>
         <a href="{% url 'sentry-project-release-tracking' project.organization.slug project.slug %}">{% trans "Release Tracking" %}</a>
     </li>
+    <li>
+        <a href="{% absolute_uri '/{}/{}/settings/saved-searches/' project.organization.slug project.slug %}">{% trans "Saved Searches" %}</a>
+    </li>
+    {% if organization.flags.early_adopter %}
+    <li>
+        <a href="{% absolute_uri '/{}/{}/settings/debug-symbols/' project.organization.slug project.slug %}">{% trans "Debug Symbols" %}</a>
+    </li>
+    {% endif %}
   </ul>
-  <h6 class="nav-header">{% trans "Setup" %}</h6>
+  <h6 class="nav-header">{% trans "Data" %}</h6>
   <ul class="nav nav-stacked">
     <li>
-        <a href="{% url 'sentry-project-setup' project.organization.slug project.slug %}">{% trans "Instructions" %}</a>
+        <a href="{% absolute_uri '/{}/{}/settings/install/' project.organization.slug project.slug %}">{% trans "Error Tracking" %}</a>
+    </li>
+    {% if organization.flags.early_adopter %}
+    <li>
+        <a href="{% absolute_uri '/{}/{}/settings/csp/' project.organization.slug project.slug %}">{% trans "CSP Reports" %}</a>
+    </li>
+    {% endif %}
+    <li>
+        <a href="{% absolute_uri '/{}/{}/settings/user-feedback/' project.organization.slug project.slug %}">{% trans "User Feedback" %}</a>
     </li>
     <li{% if page == 'keys' %} class="active"{% endif %}>
-        <a href="{% url 'sentry-manage-project-keys' project.organization.slug project.slug %}">{% trans "Client Keys" %}</a>
+        <a href="{% url 'sentry-manage-project-keys' project.organization.slug project.slug %}">{% trans "Client Keys (DSN)" %}</a>
     </li>
   </ul>
   {% with project|get_plugins as plugins %}

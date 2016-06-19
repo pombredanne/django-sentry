@@ -15,13 +15,14 @@ from rest_framework.parsers import JSONParser
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from structlog import get_logger
 
 from sentry.app import raven, tsdb
 from sentry.models import ApiKey, AuditLogEntry
 from sentry.utils.cursors import Cursor
 from sentry.utils.http import absolute_uri, is_valid_origin
 
-from .authentication import ApiKeyAuthentication, ProjectKeyAuthentication
+from .authentication import ApiKeyAuthentication, TokenAuthentication
 from .paginator import Paginator
 from .permissions import NoPermission
 
@@ -33,10 +34,12 @@ ONE_DAY = ONE_HOUR * 24
 LINK_HEADER = '<{uri}&cursor={cursor}>; rel="{name}"; results="{has_results}"; cursor="{cursor}"'
 
 DEFAULT_AUTHENTICATION = (
+    TokenAuthentication,
     ApiKeyAuthentication,
-    ProjectKeyAuthentication,
-    SessionAuthentication
+    SessionAuthentication,
 )
+
+logger = get_logger()
 
 
 class DocSection(Enum):
@@ -98,11 +101,23 @@ class Endpoint(APIView):
         user = request.user if request.user.is_authenticated() else None
         api_key = request.auth if isinstance(request.auth, ApiKey) else None
 
-        AuditLogEntry.objects.create(
+        entry = AuditLogEntry.objects.create(
             actor=user,
             actor_key=api_key,
             ip_address=request.META['REMOTE_ADDR'],
             **kwargs
+        )
+
+        if entry.actor_id:
+            logger.bind(actor_id=entry.actor_id)
+        if entry.actor_key_id:
+            logger.bind(actor_key_id=entry.actor_key_id)
+
+        logger.info(
+            name='sentry.audit.entry',
+            entry_id=entry.id,
+            event=entry.get_event_display(),
+            actor_label=entry.actor_label,
         )
 
     @csrf_exempt
@@ -119,6 +134,14 @@ class Endpoint(APIView):
 
         if settings.SENTRY_API_RESPONSE_DELAY:
             time.sleep(settings.SENTRY_API_RESPONSE_DELAY / 1000.0)
+
+        origin = request.META.get('HTTP_ORIGIN')
+        if origin and request.auth:
+            allowed_origins = request.auth.get_allowed_origins()
+            if not is_valid_origin(origin, allowed=allowed_origins):
+                response = Response('Invalid origin: %s' % (origin,), status=400)
+                self.response = self.finalize_response(request, response, *args, **kwargs)
+                return self.response
 
         try:
             self.initial(request, *args, **kwargs)
@@ -139,32 +162,16 @@ class Endpoint(APIView):
         except Exception as exc:
             response = self.handle_exception(request, exc)
 
+        if origin:
+            self.add_cors_headers(request, response)
+
         self.response = self.finalize_response(request, response, *args, **kwargs)
+
         return self.response
 
-    def finalize_response(self, request, response, *args, **kwargs):
-        response = super(Endpoint, self).finalize_response(
-            request, response, *args, **kwargs
-        )
-
-        self.add_cors_headers(request, response)
-
-        return response
-
     def add_cors_headers(self, request, response):
-        if not request.auth:
-            return
-
-        origin = request.META.get('HTTP_ORIGIN')
-        if not origin:
-            return
-
-        allowed_origins = request.auth.get_allowed_origins()
-        if is_valid_origin(origin, allowed=allowed_origins):
-            response['Access-Control-Allow-Origin'] = origin
-            response['Access-Control-Allow-Methods'] = ', '.join(self.http_method_names)
-
-        return
+        response['Access-Control-Allow-Origin'] = request.META['HTTP_ORIGIN']
+        response['Access-Control-Allow-Methods'] = ', '.join(self.http_method_names)
 
     def paginate(self, request, on_results=None, paginator_cls=Paginator,
                  default_per_page=100, **kwargs):

@@ -3,6 +3,7 @@ import {Link} from 'react-router';
 
 const Version = React.createClass({
   propTypes: {
+    anchor: React.PropTypes.bool,
     version: React.PropTypes.string.isRequired,
     orgId: React.PropTypes.string.isRequired,
     projectId: React.PropTypes.string.isRequired
@@ -15,16 +16,14 @@ const Version = React.createClass({
   },
 
   render() {
-    // NOTE: version is encoded because it can contain slashes "/",
-    //       which can interfere with URL construction
-    let version = encodeURIComponent(this.props.version);
-    let shortVersion = version.length === 40 ? version.substr(0, 12) : version;
-
-    let {orgId, projectId} = this.props;
+    let {orgId, projectId, version} = this.props;
+    let shortVersion = version.match(/^[a-f0-9]{40}$/) ? version.substr(0, 12) : version;
 
     if (this.props.anchor) {
       return (
-        <Link to={`/${orgId}/${projectId}/releases/${version}/`}>
+        // NOTE: version is encoded because it can contain slashes "/",
+        //       which can interfere with URL construction
+        <Link to={`/${orgId}/${projectId}/releases/${encodeURIComponent(version)}/`}>
           <span title={version}>{shortVersion}</span>
         </Link>
       );

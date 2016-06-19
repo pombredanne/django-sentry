@@ -11,6 +11,7 @@ from __future__ import absolute_import
 from collections import OrderedDict
 from django import forms
 
+from sentry.models import TagKey
 from sentry.rules.conditions.base import EventCondition
 
 
@@ -43,7 +44,7 @@ class TaggedEventForm(forms.Form):
 
 class TaggedEventCondition(EventCondition):
     form_cls = TaggedEventForm
-    label = 'An events tags match {key} {match} {value}'
+    label = u'An events tags match {key} {match} {value}'
 
     def passes(self, event, state, **kwargs):
         key = self.get_option('key')
@@ -56,7 +57,7 @@ class TaggedEventCondition(EventCondition):
         value = value.lower()
         key = key.lower()
 
-        tags = (v.lower() for k, v in event.get_tags() if k.lower() == key)
+        tags = (v.lower() for k, v in event.get_tags() if k.lower() == key or TagKey.get_standardized_key(k) == key)
 
         if match == MatchType.EQUAL:
             for t_value in tags:

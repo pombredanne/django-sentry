@@ -11,17 +11,20 @@ import logging
 
 from django import forms
 
-from sentry import features
 from sentry.app import (
     digests,
     ratelimiter,
 )
+from sentry.digests import get_option_key as get_digest_option_key
 from sentry.digests.notifications import (
     event_to_record,
     unsplit_key,
 )
 from sentry.plugins import Notification, Plugin
-from sentry.models import UserOption
+from sentry.models import (
+    ProjectOption,
+    UserOption,
+)
 from sentry.tasks.digests import deliver_digest
 
 
@@ -52,6 +55,8 @@ class NotificationPlugin(Plugin):
     project_conf_form = NotificationConfigurationForm
 
     def notify(self, notification):
+        self.logger.info('Notification dispatched [event=%s] [plugin=%s]',
+                         notification.event.id, self.slug)
         event = notification.event
         return self.notify_users(event.group, event)
 
@@ -63,28 +68,27 @@ class NotificationPlugin(Plugin):
                 continue
             raise NotImplementedError('The default behavior for notification de-duplication does not support args')
 
-        if hasattr(self, 'notify_digest'):
-            project = event.group.project
-
-            # If digest delivery is disabled, we still need to send a
-            # notification -- we also need to check rate limits, since
-            # ``should_notify`` skips this step if the plugin supports digests.
-            if not features.has('projects:digests:deliver', project):
-                if self.__is_rate_limited(event.group, event):
-                    logger = logging.getLogger('sentry.plugins.{0}'.format(self.get_conf_key()))
-                    logger.info('Notification for project %r dropped due to rate limiting', project)
-                    return
-
-                notification = Notification(event=event, rules=rules)
-                self.notify(notification)
-
-            if features.has('projects:digests:store', project):
-                key = unsplit_key(self, event.group.project)
-                if digests.add(key, event_to_record(event, rules)):
-                    deliver_digest.delay(key)
+        project = event.group.project
+        if hasattr(self, 'notify_digest') and digests.enabled(project):
+            get_digest_option = lambda key: ProjectOption.objects.get_value(
+                project,
+                get_digest_option_key(self.get_conf_key(), key),
+            )
+            digest_key = unsplit_key(self, event.group.project)
+            immediate_delivery = digests.add(
+                digest_key,
+                event_to_record(event, rules),
+                increment_delay=get_digest_option('increment_delay'),
+                maximum_delay=get_digest_option('maximum_delay'),
+            )
+            if immediate_delivery:
+                deliver_digest.delay(digest_key)
 
         else:
-            notification = Notification(event=event, rules=rules)
+            notification = Notification(
+                event=event,
+                rules=rules,
+            )
             self.notify(notification)
 
     def notify_users(self, group, event, fail_silently=False):
@@ -94,6 +98,10 @@ class NotificationPlugin(Plugin):
         pass
 
     def get_sendable_users(self, project):
+        """
+        Return a collection of user IDs that are eligible to receive
+        notifications for the provided project.
+        """
         conf_key = self.get_conf_key()
 
         alert_settings = dict(
@@ -129,15 +137,23 @@ class NotificationPlugin(Plugin):
             limit=10,
         )
 
+    def is_configured(self, project):
+        raise NotImplementedError
+
     def should_notify(self, group, event):
+        project = event.project
+        if not self.is_configured(project=project):
+            return False
+
         if group.is_muted():
             return False
 
-        # If the plugin doesn't support digests, perform rate limit checks to
-        # support backwards compatibility with older plugins.
-        if not hasattr(self, 'notify_digest') and self.__is_rate_limited(group, event):
+        # If the plugin doesn't support digests or they are not enabled,
+        # perform rate limit checks to support backwards compatibility with
+        # older plugins.
+        if not (hasattr(self, 'notify_digest') and digests.enabled(project)) and self.__is_rate_limited(group, event):
             logger = logging.getLogger('sentry.plugins.{0}'.format(self.get_conf_key()))
-            logger.info('Notification for project %r dropped due to rate limiting', group.project)
+            logger.info('Notification for project %r dropped due to rate limiting', project)
             return False
 
         return True

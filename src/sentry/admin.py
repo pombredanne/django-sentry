@@ -30,6 +30,7 @@ class BroadcastAdmin(admin.ModelAdmin):
     list_display = ('title', 'message', 'is_active', 'date_added')
     list_filter = ('is_active',)
     search_fields = ('title', 'message', 'link')
+    readonly_fields = ('upstream_id', 'date_added')
 
 admin.site.register(Broadcast, BroadcastAdmin)
 
@@ -56,6 +57,7 @@ class ProjectAdmin(admin.ModelAdmin):
     search_fields = ('name', 'organization__slug', 'organization__name', 'team__slug',
                      'team__name', 'slug')
     raw_id_fields = ('team', 'organization')
+    readonly_fields = ('first_event', 'date_added')
 
 admin.site.register(Project, ProjectAdmin)
 
@@ -140,8 +142,12 @@ class TeamAdmin(admin.ModelAdmin):
     inlines = (TeamProjectInline,)
 
     def save_model(self, request, obj, form, change):
+        prev_org = obj.organization_id
         super(TeamAdmin, self).save_model(request, obj, form, change)
         if not change:
+            return
+        new_org = obj.organization_id
+        if new_org != prev_org:
             return
 
         Project.objects.filter(
@@ -150,8 +156,22 @@ class TeamAdmin(admin.ModelAdmin):
             organization=obj.organization,
         )
 
-        # TODO(dcramer): maintain memberships where possible
-        # remove invalid team links
+        old_memberships = OrganizationMember.objects.filter(
+            teams=obj,
+        ).exclude(organization=obj.organization)
+        for member in old_memberships:
+            try:
+                new_member = OrganizationMember.objects.get(
+                    user=member.user,
+                    organization=obj.organization,
+                )
+            except OrganizationMember.DoesNotExist:
+                continue
+            OrganizationMemberTeam.objects.create(
+                team=obj,
+                organizationmember=new_member,
+            )
+
         OrganizationMemberTeam.objects.filter(
             team=obj,
         ).exclude(
@@ -166,7 +186,7 @@ class UserAdmin(admin.ModelAdmin):
     change_user_password_template = None
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
-        (_('Personal info'), {'fields': ('first_name', 'last_name', 'email')}),
+        (_('Personal info'), {'fields': ('name', 'email')}),
         (_('Permissions'), {'fields': ('is_active', 'is_staff', 'is_superuser')}),
         (_('Important dates'), {'fields': ('last_login', 'date_joined')}),
     )
@@ -179,9 +199,9 @@ class UserAdmin(admin.ModelAdmin):
     form = UserChangeForm
     add_form = UserCreationForm
     change_password_form = AdminPasswordChangeForm
-    list_display = ('username', 'email', 'first_name', 'last_name', 'is_staff')
+    list_display = ('username', 'email', 'name', 'is_staff', 'date_joined')
     list_filter = ('is_staff', 'is_superuser', 'is_active', 'is_managed')
-    search_fields = ('username', 'first_name', 'last_name', 'email')
+    search_fields = ('username', 'name', 'email')
     ordering = ('username',)
     inlines = (OrganizationMemberInline, AuthIdentityInline)
 
@@ -310,6 +330,8 @@ class AuditLogEntryAdmin(admin.ModelAdmin):
     list_filter = ('event', 'datetime')
     search_fields = ('actor__email', 'organization__name', 'organization__slug')
     raw_id_fields = ('organization', 'actor', 'target_user')
+    readonly_fields = ('organization', 'actor', 'actor_key', 'target_object',
+                       'target_user', 'event', 'ip_address', 'data', 'datetime')
 
 admin.site.register(AuditLogEntry, AuditLogEntryAdmin)
 

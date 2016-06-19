@@ -1,6 +1,11 @@
 import React from 'react';
+import {t} from '../../locale';
 
 const EventErrorItem = React.createClass({
+  propTypes: {
+    error: React.PropTypes.object.isRequired
+  },
+
   getInitialState(){
     return {
       isOpen: false,
@@ -21,7 +26,7 @@ const EventErrorItem = React.createClass({
     return (
       <li>
         {error.message}
-        <small> <a style={{marginLeft: 10}} onClick={this.toggle}>{isOpen ? 'Collapse' : 'Expand'}</a></small>
+        <small> <a style={{marginLeft: 10}} onClick={this.toggle}>{isOpen ? t('Collapse') : t('Expand')}</a></small>
         <pre style={{display: isOpen ? 'block' : 'none'}}>{JSON.stringify(error.data, null, 2)}</pre>
       </li>
     );

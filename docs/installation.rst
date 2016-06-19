@@ -13,9 +13,13 @@ Some basic prerequisites which you'll need in order to run Sentry:
   assumes an ubuntu based system.
 * Python 2.7
 * ``python-setuptools``, ``python-pip``, ``python-dev``, ``libxslt1-dev``,
-  ``libxml2-dev``, ``libz-dev``, ``libffi-dev``, ``libssl-dev``, ``libpq-dev``
+  ``gcc``, ``libffi-dev``, ``libjpeg-dev``, ``libxml2-dev``, ``libxslt-dev``,
+  ``libyaml-dev``
 * `PostgreSQL <http://www.postgresql.org/>`_
-* `Redis <http://redis.io>`_ (2.8.9 or newer)
+* `Redis <http://redis.io>`_ (the minimum version requirement is 2.8.9, but 2.8.18, 3.0, or newer are recommended)
+
+  * If running Ubuntu < 15.04, you'll need to install from a different PPA.
+    We recommend `chris-lea/redis-server <https://launchpad.net/~chris-lea/+archive/ubuntu/redis-server>`_
 * `Nginx <http://nginx.org>`_ (``nginx-full``)
 * A dedicated domain to host Sentry on (i.e. `sentry.yourcompany.com`).
 
@@ -103,7 +107,40 @@ via ``sentry``, and get something like the following:
 .. code-block:: bash
 
   $ sentry
-  usage: [SENTRY_CONF=/path/to/settings.py] sentry [command] [options]
+  Usage: sentry [OPTIONS] COMMAND [ARGS]...
+
+    Sentry is cross-platform crash reporting built with love.
+
+    The configuration file is looked up in the `~/.sentry` config directory but this can
+    be overridden with the `SENTRY_CONF` environment variable or be explicitly provided
+    through the `--config` parameter.
+
+  Options:
+    --config PATH  Path to configuration files.
+    --version      Show the version and exit.
+    --help         Show this message and exit.
+
+  Commands:
+    celery      DEPRECATED see `sentry run` instead.
+    cleanup     Delete a portion of trailing data based on...
+    config      Manage runtime config options.
+    createuser  Create a new user.
+    devserver   Starts a lightweight web server for...
+    django      Execute Django subcommands.
+    dsym        Manage system symbols in Sentry.
+    export      Exports core metadata for the Sentry...
+    files       Manage files from filestore.
+    help        Show this message and exit.
+    import      Imports data from a Sentry export.
+    init        Initialize new configuration directory.
+    plugins     Manage Sentry plugins.
+    queues      Manage Sentry queues.
+    repair      Attempt to repair any invalid data.
+    run         Run a service.
+    shell       Run a Python interactive interpreter.
+    start       DEPRECATED see `sentry run` instead.
+    tsdb        Tools for interacting with the time series...
+    upgrade     Perform any pending database migrations and...
 
 
 Installing from Source
@@ -140,17 +177,19 @@ Initializing the Configuration
 Now you'll need to create the default configuration. To do this, you'll
 use the ``init`` command You can specify an alternative configuration path
 as the argument to init, otherwise it will use the default of
-``~/.sentry/sentry.conf.py``.
+``~/.sentry``.
 
 ::
 
     # the path is optional
-    sentry init /www/sentry/sentry.conf.py
+    sentry init /etc/sentry
 
-The configuration for the server is based on ``sentry.conf.server``, which
-contains a basic Django project configuration, as well as the default
-Sentry configuration values. It defaults to SQLite, however **SQLite is
-not a fully supported database and should not be used in production**.
+Starting with 8.0.0, ``init`` now creates two files, ``sentry.conf.py`` and
+``config.yml``. To avoid confusion, ``config.yml`` will slowly be replacing
+``sentry.conf.py``, but right now, the uses of ``config.yml`` are limited.
+
+The configuration inherits all of the server defaults, but you may need to
+change certain things, such as the database connection:
 
 ::
 
@@ -169,9 +208,6 @@ not a fully supported database and should not be used in production**.
         }
     }
 
-    # No trailing slash!
-    SENTRY_URL_PREFIX = 'http://sentry.example.com'
-
 
 Configure Redis
 ---------------
@@ -185,22 +221,27 @@ you can configure the nodes in very different ones to enable more
 aggressive/optimized LRU.
 
 That said, if you're running a small install you can probably get away
-with just setting up the defaults::
+with just setting up the defaults in ``config.yml``:
 
-    SENTRY_REDIS_OPTIONS = {
-        'hosts': {
-            0: {
-                'host': '127.0.0.1',
-                'port': 6379,
-                'timeout': 3,
-                #'password': 'redis auth password'
-            }
-        }
-    }
+.. code-block:: yaml
+
+    redis.clusters:
+      default:
+        hosts:
+          0:
+            host: 127.0.0.1
+            port: 6379
+            # password: "my-secret-password"
 
 All built-in Redis implementations (other than the queue) will use these
 default settings, but each individual service also will allow you to
-override it's cluster settings.
+override it's cluster settings by passing the name of the cluster to use as the
+``cluster`` option.
+
+Cluster options are passed directly to rb (a Redis routing library) as keyword
+arguments to the ``Cluster`` constructor. A more thorough discussion of the
+availabile configuration parameters can be found at the `rb GitHub repository
+<https://github.com/getsentry/rb>`_.
 
 See the individual documentation for :doc:`the queue <queue/>`,
 :doc:`update buffers <buffer>`, :doc:`quotas <throttling>`, and
@@ -209,22 +250,25 @@ See the individual documentation for :doc:`the queue <queue/>`,
 Configure Outbound Mail
 -----------------------
 
-Several settings exist as part of the Django framework which will
-configure your outbound mail server. For the standard implementation,
-using a simple SMTP server, you can simply configure the following:
+Initially, you will be prompted to supply these values during our Installation
+Wizard, but you may wish to explicitly declare them in your config file. For
+the standard implementation, using a simple SMTP server, you can simply
+configure the following in ``config.yml``:
 
-.. code-block:: python
+.. code-block:: yaml
 
-    EMAIL_HOST = 'localhost'
-    EMAIL_HOST_PASSWORD = ''
-    EMAIL_HOST_USER = ''
-    EMAIL_PORT = 25
-    EMAIL_USE_TLS = False
+    mail.from: 'sentry@localhost'
+    mail.host: 'localhost'
+    mail.port: 25
+    mail.username: ''
+    mail.password: ''
+    mail.use-tls: false
 
-Being that Django is a pluggable framework, you also have the ability to
-specify different mail backends. See the `official Django documentation
-<https://docs.djangoproject.com/en/1.3/topics/email/?from=olddocs#email-backends>`_
-for more information on alternative backends.
+Alternatively, if you want to disable email entirely, you could set:
+
+.. code-block:: yaml
+
+    mail.backend: 'dummy'
 
 Running Migrations
 ------------------
@@ -240,37 +284,37 @@ you've created the database:
 
 Once done, you can create the initial schema using the ``upgrade`` command:
 
-.. code-block:: python
+.. code-block:: bash
 
-    $ SENTRY_CONF=/www/sentry/sentry.conf.py sentry upgrade
+    $ SENTRY_CONF=/etc/sentry sentry upgrade
 
 Next up you'll need to create the first user, which will act as a superuser:
 
 .. code-block:: bash
 
     # create a new user
-    $ SENTRY_CONF=/www/sentry/sentry.conf.py sentry createuser
+    $ SENTRY_CONF=/etc/sentry sentry createuser
 
 All schema changes and database upgrades are handled via the ``upgrade``
 command, and this is the first thing you'll want to run when upgrading to
 future versions of Sentry.
 
-.. note:: Internally this uses `South <http://south.aeracode.org>`_ to
+.. note:: Internally this uses `South <https://south.readthedocs.io/en/latest/index.html>`_ to
           manage database migrations.
 
 Starting the Web Service
 ------------------------
 
-Sentry provides a built-in webserver (powered by gunicorn and eventlet) to
+Sentry provides a built-in webserver (powered by uWSGI) to
 get you off the ground quickly, also you can setup Sentry as WSGI
 application, in that case skip to section `Running Sentry as WSGI
 application`.
 
-To start the built-in webserver run ``sentry start``:
+To start the built-in webserver run ``sentry run web``:
 
 ::
 
-  SENTRY_CONF=/www/sentry/sentry.conf.py sentry start
+  SENTRY_CONF=/etc/sentry sentry run web
 
 You should now be able to test the web service by visiting `http://localhost:9000/`.
 
@@ -282,12 +326,26 @@ in addition to the web service workers:
 
 ::
 
-  SENTRY_CONF=/www/sentry/sentry.conf.py sentry celery worker -B
+  SENTRY_CONF=/etc/sentry sentry run worker
 
 See :doc:`queue` for more details on configuring workers.
 
 .. note:: `Celery <http://celeryproject.org/>`_ is an open source task
           framework for Python.
+
+Starting the Cron Process
+-------------------------
+
+Sentry also needs a cron process:
+
+::
+
+  SENTRY_CONF=/etc/sentry sentry run cron
+
+It's recommended to only run one of them at the time or you will see
+unnecessary extra tasks being pushed onto the queues but the system will
+still behave as intended if multiple beat processes are run.  This can be
+used to achieve high availability.
 
 Setup a Reverse Proxy
 ---------------------
@@ -346,6 +404,8 @@ We recommend using whatever software you are most familiar with for
 managing Sentry processes. For us, that software of choice is `Supervisor
 <http://supervisord.org/>`_.
 
+For Debian, Ubuntu and other operating systems relying on ``systemd``, see that section.
+
 Configure ``supervisord``
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -357,7 +417,7 @@ go.
 
   [program:sentry-web]
   directory=/www/sentry/
-  environment=SENTRY_CONF="/www/sentry/sentry.conf.py"
+  environment=SENTRY_CONF="/etc/sentry"
   command=/www/sentry/bin/sentry start
   autostart=true
   autorestart=true
@@ -367,14 +427,89 @@ go.
 
   [program:sentry-worker]
   directory=/www/sentry/
-  environment=SENTRY_CONF="/www/sentry/sentry.conf.py"
-  command=/www/sentry/bin/sentry celery worker -B
+  environment=SENTRY_CONF="/etc/sentry"
+  command=/www/sentry/bin/sentry run worker
   autostart=true
   autorestart=true
   redirect_stderr=true
   stdout_logfile=syslog
   stderr_logfile=syslog
 
+  [program:sentry-cron]
+  directory=/www/sentry/
+  environment=SENTRY_CONF="/etc/sentry"
+  command=/www/sentry/bin/sentry run cron
+  autostart=true
+  autorestart=true
+  redirect_stderr=true
+  stdout_logfile=syslog
+  stderr_logfile=syslog
+
+Configure ``systemd``
+~~~~~~~~~~~~~~~~~~~~~
+
+Configuring systemd requires three files, one for each service. On Ubuntu 16.04, the files are located in ``/etc/systemd/system``. Create three files named ``sentry-web.service``, ``sentry-worker.service`` and ``sentry-cron.service`` with the contents listed below.
+
+To ensure that the services start up on reboots, run the following command: ``systemctl enable sentry-web.service``.
+
+**sentry-web.service**
+
+::
+
+  [Unit]
+  Description=Sentry Main Service
+  After=network.target
+  Requires=sentry-worker.service
+  Requires=sentry-cron.service
+
+  [Service]
+  Type=simple
+  User=sentry
+  Group=sentry
+  WorkingDirectory=/www/sentry
+  Environment=SENTRY_CONF=/etc/sentry
+  ExecStart=/www/sentry/bin/sentry run web
+
+  [Install]
+  WantedBy=multi-user.target
+
+**sentry-worker.service**
+
+::
+
+  [Unit]
+  Description=Sentry Background Worker
+  After=network.target
+
+  [Service]
+  Type=simple
+  User=sentry
+  Group=sentry
+  WorkingDirectory=/www/sentry
+  Environment=SENTRY_CONF=/etc/sentry
+  ExecStart=/www/sentry/bin/sentry run worker
+
+  [Install]
+  WantedBy=multi-user.target
+
+**sentry-cron.service**
+
+::
+
+  [Unit]
+  Description=Sentry Beat Service
+  After=network.target
+
+  [Service]
+  Type=simple
+  User=sentry
+  Group=sentry
+  WorkingDirectory=/www/sentry
+  Environment=SENTRY_CONF=/etc/sentry
+  ExecStart=/www/sentry/bin/sentry run cron
+
+  [Install]
+  WantedBy=multi-user.target
 
 Removing Old Data
 -----------------

@@ -2,7 +2,7 @@
 
 <style type="text/css">
   body {
-    background-image: url("{% asset_url 'sentry' 'images/email/sentry-pattern.png' %}");
+    background-image: url("{% absolute_asset_url 'sentry' 'images/email/sentry-pattern.png' %}");
   }
   body, .main {
     width: 100%;
@@ -240,6 +240,15 @@
     border-radius: 3px;
   }
 
+  .notice {
+    background: #FBFAF4;
+    color: #866938;
+    border: 1px solid #E2D2AD;
+    padding: 15px;
+    margin-bottom: 20px;
+    border-radius: 3px;
+  }
+
   strong {
     font-weight: bold;
   }
@@ -376,9 +385,14 @@
   .inner .note-body a {
     word-break: break-all;
   }
+
+  .avatar-column img,
+  .avatar-column span {
+    width: 48px;
+    height: 48px;
+  }
   .avatar-column {
-    width: 60px;
-    vertical-align: top;
+    width: 64px;
   }
   .notch-column {
     width: 7px;
@@ -388,8 +402,23 @@
   .notch-column img {
     display: block;
   }
-  .avatar {
+  .avatar-container {
+    width: 20px;
+    height: 20px;
+    margin-right: 5px;
+    position: relative;
+    display: inline-block;
+    vertical-align: bottom;
+  }
+  .avatar,
+  .html-avatar {
     border-radius: 3px;
+  }
+  .html-avatar {
+    display: inline-block;
+    text-align: center;
+    vertical-align: middle;
+    color: #fff;
   }
 
   .inner table.reset {
@@ -401,6 +430,16 @@
     background: #fff;
     padding: 0;
     padding-top: 0;
+  }
+
+  .digest h2 {
+    margin-bottom: 5px;
+  }
+
+  .digest .dateline {
+    color: #687276;
+    font-size: 16px;
+    margin-bottom: 30px;
   }
 
   .digest .rule {
@@ -419,6 +458,7 @@
   .digest td.error-level {
     padding: 0;
     padding-top: 12px;
+    padding-right: 18px;
     width: 46px;
     vertical-align: top;
   }
@@ -428,10 +468,6 @@
     font-size: 9px;
     padding: 4px 0;
     text-transform: uppercase;
-  }
-
-  .digest td.event-detail {
-    padding-left: 18px;
   }
 
   table.event-list {

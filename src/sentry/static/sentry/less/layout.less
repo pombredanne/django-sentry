@@ -1,13 +1,16 @@
+html {
+  height: 100%;
+}
+
 body {
   margin: 0;
   font-family: @font-family-base;
   font-size: 16px;
   line-height: 24px;
-  color: @gray-dark;
+  color: @gray-darker;
   -webkit-font-smoothing: antialiased;
   .transition(.1s padding ease-in-out);
   overflow-x: hidden;
-  background: @bgColor;
   // padding-left: @sidebar-width;
 }
 
@@ -20,7 +23,7 @@ body.narrow {
   background: #fff;
 
   .container {
-    max-width: 660px !important;
+    max-width: 760px !important;
   }
 }
 
@@ -39,6 +42,7 @@ body.white-bg {
 */
 
 body.auth {
+  zoom: 1;
   .container {
     max-width: 400px !important;
   }
@@ -61,7 +65,7 @@ body.auth {
 */
 
 header {
-  background-color: #515C6F;
+  background-color: @header-bg-color;
   color: #fff;
   .clearfix();
   font-size: 15px;
@@ -69,6 +73,19 @@ header {
 
   .container {
     padding-right: 0;
+  }
+
+  .admin-action-message {
+    line-height: 42px;
+    display: block;
+    float: right;
+    font-size: 13px;
+    font-weight: bold;
+    padding-right: 10px;
+    .animated;
+    .animated.infinite;
+    .animated.hinge;
+    .flash-50;
   }
 
   a {
@@ -164,8 +181,34 @@ header {
   font-size: 16px;
   .clearfix;
 
-  .container {
+  .org-name {
+    float: left;
+    font-weight: bold;
+    color: @gray-darker;
 
+    a {
+      color: @gray-darker;
+
+      &:hover {
+        color: @gray-darkest;
+      }
+    }
+  }
+  .project-select {
+    float: left;
+    padding-left: 22px;
+    position: relative;
+
+    &:before {
+      content: "";
+      display: block;
+      position: absolute;
+      width: 1px;
+      height: 19px;
+      top: -1px;
+      left: 10px;
+      background: @trim;
+    }
   }
 
   .logo-logged-in {
@@ -240,8 +283,8 @@ header {
 footer {
   line-height: 30px;
   text-align: center;
-  color: lighten(@gray, 15);
-  border-top: 1px solid lighten(@trim, 8);
+  color: @gray;
+  border-top: 1px solid @trim;
   margin-top: 20px;
   padding: 28px 0;
 
@@ -252,14 +295,14 @@ footer {
   }
 
   a {
-    color: lighten(@gray, 15);
+    color: @gray;
     &:hover {
-      color: @gray;
+      color: @gray-dark;
     }
   }
 
   .icon-sentry-logo {
-    color: lighten(@gray, 15);
+    color: @gray;
     font-size: 28px;
     width: 32px;
     margin: 0 auto;
@@ -300,7 +343,7 @@ footer {
 
 @media print {
     body {
-        color: @black;
+        color: @gray-darkest;
     }
     header {
         display: none;

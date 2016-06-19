@@ -10,22 +10,26 @@ from __future__ import absolute_import
 
 __all__ = (
     'TestCase', 'TransactionTestCase', 'APITestCase', 'AuthProviderTestCase',
-    'RuleTestCase', 'PermissionTestCase', 'PluginTestCase'
+    'RuleTestCase', 'PermissionTestCase', 'PluginTestCase', 'CliTestCase', 'LiveServerTestCase',
 )
 
 import base64
 import os.path
+import signal
 import urllib
+from contextlib import contextmanager
 
+from click.testing import CliRunner
 from django.conf import settings
 from django.contrib.auth import login
 from django.core.cache import cache
 from django.core.urlresolvers import reverse
 from django.http import HttpRequest
-from django.test import TestCase, TransactionTestCase
+from django.test import TestCase, TransactionTestCase, LiveServerTestCase
 from django.utils.importlib import import_module
-from exam import before, Exam
+from exam import before, after, fixture, Exam
 from rest_framework.test import APITestCase as BaseAPITestCase
+from selenium import webdriver
 
 from sentry import auth
 from sentry.auth.providers.dummy import DummyProvider
@@ -36,16 +40,21 @@ from sentry.rules import EventState
 from sentry.utils import json
 
 from .fixtures import Fixtures
-from .helpers import AuthProvider, Feature, get_auth_header, TaskRunner
+from .helpers import AuthProvider, Feature, get_auth_header, TaskRunner, override_options
 
 
 class BaseTestCase(Fixtures, Exam):
-    urls = 'tests.sentry.web.urls'
+    urls = 'sentry.web.urls'
 
     def assertRequiresAuthentication(self, path, method='GET'):
         resp = getattr(self.client, method.lower())(path)
         assert resp.status_code == 302
         assert resp['Location'].startswith('http://testserver' + reverse('sentry-login'))
+
+    @before
+    def setup_dummy_auth_provider(self):
+        auth.register('dummy', DummyProvider)
+        self.addCleanup(auth.unregister, 'dummy', DummyProvider)
 
     @before
     def setup_session(self):
@@ -137,7 +146,7 @@ class BaseTestCase(Fixtures, Exam):
                 reverse('sentry-api-store'), message,
                 content_type='application/octet-stream',
                 HTTP_X_SENTRY_AUTH=get_auth_header(
-                    '_postWithHeader',
+                    '_postWithHeader/0.0.0',
                     key,
                     secret,
                     protocol,
@@ -151,7 +160,7 @@ class BaseTestCase(Fixtures, Exam):
         elif isinstance(data, basestring):
             body = data
         path = reverse('sentry-api-csp-report', kwargs={'project_id': self.project.id})
-        path += '?sentry_key=%s&sentry_version=5' % self.projectkey.public_key
+        path += '?sentry_key=%s' % self.projectkey.public_key
         with self.tasks():
             return self.client.post(
                 path, data=body,
@@ -205,6 +214,26 @@ class BaseTestCase(Fixtures, Exam):
             )
         return resp
 
+    def options(self, options):
+        """
+        A context manager that temporarily sets a global option and reverts
+        back to the original value when exiting the context.
+        """
+        return override_options(options)
+
+    @contextmanager
+    def dsn(self, dsn):
+        """
+        A context manager that temporarily sets the internal client's DSN
+        """
+        from raven.contrib.django.models import client
+
+        try:
+            client.set_dsn(dsn)
+            yield
+        finally:
+            client.set_dsn(None)
+
     _postWithSignature = _postWithHeader
     _postWithNewSignature = _postWithHeader
 
@@ -217,6 +246,26 @@ class TransactionTestCase(BaseTestCase, TransactionTestCase):
     pass
 
 
+class LiveServerTestCase(BaseTestCase, LiveServerTestCase):
+    @before
+    def setup_browser(self):
+        # NOTE: this relies on the phantomjs-prebuilt dependency in package.json.
+        phantomjs_path = os.path.join(
+            settings.NODE_MODULES_ROOT,
+            'phantomjs-prebuilt',
+            'bin',
+            'phantomjs',
+        )
+        self.browser = webdriver.PhantomJS(executable_path=phantomjs_path)
+
+    @after
+    def teardown_browser(self):
+        self.browser.close()
+        # TODO: remove this when fixed in: https://github.com/seleniumhq/selenium/issues/767
+        self.browser.service.process.send_signal(signal.SIGTERM)
+        self.browser.quit()
+
+
 class APITestCase(BaseTestCase, BaseAPITestCase):
     pass
 
@@ -227,8 +276,10 @@ class AuthProviderTestCase(TestCase):
 
     def setUp(self):
         super(AuthProviderTestCase, self).setUp()
-        auth.register(self.provider_name, self.provider)
-        self.addCleanup(auth.unregister, self.provider_name, self.provider)
+        # TestCase automatically sets up dummy provider
+        if self.provider_name != 'dummy' or self.provider != DummyProvider:
+            auth.register(self.provider_name, self.provider)
+            self.addCleanup(auth.unregister, self.provider_name, self.provider)
 
 
 class RuleTestCase(TestCase):
@@ -268,7 +319,10 @@ class PermissionTestCase(TestCase):
     def setUp(self):
         super(PermissionTestCase, self).setUp()
         self.owner = self.create_user(is_superuser=False)
-        self.organization = self.create_organization(owner=self.owner)
+        self.organization = self.create_organization(
+            owner=self.owner,
+            flags=0,  # disable default allow_joinleave access
+        )
         self.team = self.create_team(organization=self.organization)
 
     def assert_can_access(self, user, path, method='GET'):
@@ -392,3 +446,13 @@ class PluginTestCase(TestCase):
         super(PluginTestCase, self).setUp()
         plugins.register(self.plugin)
         self.addCleanup(plugins.unregister, self.plugin)
+
+
+class CliTestCase(TestCase):
+    runner = fixture(CliRunner)
+    command = None
+    default_args = []
+
+    def invoke(self, *args):
+        args += tuple(self.default_args)
+        return self.runner.invoke(self.command, args, obj={})

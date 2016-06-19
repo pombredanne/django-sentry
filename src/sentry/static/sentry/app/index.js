@@ -1,12 +1,12 @@
-import jQuery from "jquery";
+import jQuery from 'jquery';
 
 // setup jquery for CSRF tokens
 function getCookie(name) {
-  var cookieValue = null;
+  let cookieValue = null;
   if (document.cookie && document.cookie !== '') {
-    var cookies = document.cookie.split(';');
-    for (var i = 0; i < cookies.length; i++) {
-      var cookie = jQuery.trim(cookies[i]);
+    let cookies = document.cookie.split(';');
+    for (let i = 0; i < cookies.length; i++) {
+      let cookie = jQuery.trim(cookies[i]);
       // Does this cookie string begin with the name we want?
       if (cookie.substring(0, name.length + 1) == (name + '=')) {
         cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
@@ -17,8 +17,6 @@ function getCookie(name) {
   return cookieValue;
 }
 
-var csrftoken = getCookie("csrf");
-
 function csrfSafeMethod(method) {
   // these HTTP methods do not require CSRF protection
   return (/^(GET|HEAD|OPTIONS|TRACE)$/.test(method));
@@ -26,7 +24,7 @@ function csrfSafeMethod(method) {
 jQuery.ajaxSetup({
   beforeSend: function(xhr, settings) {
     if (!csrfSafeMethod(settings.type) && !this.crossDomain) {
-      xhr.setRequestHeader("X-CSRFToken", csrftoken);
+      xhr.setRequestHeader('X-CSRFToken', getCookie('csrf'));
     }
   }
 });
@@ -35,32 +33,42 @@ jQuery.ajaxSetup({
 // way we can call into scoped objects
 export default {
   jQuery: jQuery,
-  moment: require("moment"),
-  Raven: require("raven-js"),
-  React: require("react"),
-  ReactDOM: require("react-dom"),
-  Router: require("react-router"),
+  moment: require('moment'),
+  Raven: require('raven-js'),
+  React: require('react'),
+  ReactDOM: require('react-dom'),
+  Router: require('react-router'),
 
   Sentry: {
-    api: require("./api"),
-    routes: require("./routes"),
-    createHistory: require("history/lib/createBrowserHistory"),
-
-    Alerts: require("./components/alerts"),
-    ConfigStore: require("./stores/configStore"),
-    DropdownLink: require("./components/dropdownLink"),
-    FlotChart: require("./components/flotChart"),
-    HookStore: require("./stores/hookStore"),
-    Indicators: require("./components/indicators"),
-    ListLink: require("./components/listLink"),
-    MenuItem: require("./components/menuItem"),
-    Pagination: require("./components/pagination"),
-    ProjectSelector: require("./components/projectHeader/projectSelector"),
-    RuleEditor: require("./views/ruleEditor")
+    api: require('./api'),
+    routes: require('./routes'),
+    createHistory: require('history/lib/createBrowserHistory'),
+    Alerts: require('./components/alerts'),
+    AlertActions: require('./actions/alertActions'),
+    AvatarSettings: require('./components/avatarSettings'),
+    mixins: {
+      ApiMixin: require('./mixins/apiMixin'),
+    },
+    BarChart: require('./components/barChart'),
+    i18n: require('./locale'),
+    ConfigStore: require('./stores/configStore'),
+    Count: require('./components/count'),
+    DateTime: require('./components/dateTime'),
+    DropdownLink: require('./components/dropdownLink'),
+    FlotChart: require('./components/flotChart'),
+    HookStore: require('./stores/hookStore'),
+    Indicators: require('./components/indicators'),
+    LoadingError: require('./components/loadingError'),
+    LoadingIndicator: require('./components/loadingIndicator'),
+    ListLink: require('./components/listLink'),
+    MenuItem: require('./components/menuItem'),
+    Pagination: require('./components/pagination'),
+    ProjectSelector: require('./components/projectHeader/projectSelector'),
+    RuleEditor: require('./views/ruleEditor'),
+    StackedBarChart: require('./components/stackedBarChart'),
+    TimeSince: require('./components/timeSince'),
+    TodoList: require('./components/todos'),
+    U2fEnrollment: require('./components/u2fenrollment'),
+    U2fSign: require('./components/u2fsign')
   }
 };
-
-
-
-
-

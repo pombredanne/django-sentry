@@ -2,9 +2,12 @@ import React from 'react';
 import {defined} from '../../../utils';
 
 import StacktraceContent from './stacktraceContent';
+import ExceptionMechanism from './exceptionMechanism';
 
 const ExceptionContent = React.createClass({
   propTypes: {
+    type: React.PropTypes.oneOf(['original', 'minified']),
+    values: React.PropTypes.array.isRequired,
     view: React.PropTypes.string.isRequired,
     platform: React.PropTypes.string,
     newestFirst: React.PropTypes.bool
@@ -14,16 +17,21 @@ const ExceptionContent = React.createClass({
     let stackView = this.props.view;
     let children = this.props.values.map((exc, excIdx) => {
       return (
-        <div key={excIdx}>
-          <h4>
+        <div key={excIdx} className="exception">
+          <h5 style={{marginBottom: 5}}>
             <span>{exc.type}</span>
-          </h4>
+          </h5>
           {exc.value &&
-            <pre className="exc-message">{exc.value}</pre>
+            <pre className="exc-message" style={{marginTop: 0}}>{exc.value}</pre>
+          }
+          {exc.mechanism &&
+            <ExceptionMechanism
+              data={exc.mechanism}
+              platform={this.props.platform}/>
           }
           {defined(exc.stacktrace) &&
             <StacktraceContent
-                data={exc.stacktrace}
+                data={this.props.type === 'original' ? exc.stacktrace : exc.rawStacktrace}
                 includeSystemFrames={stackView === 'full'}
                 platform={this.props.platform}
                 newestFirst={this.props.newestFirst} />

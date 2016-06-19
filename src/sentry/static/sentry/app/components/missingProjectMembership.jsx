@@ -1,11 +1,19 @@
 import React from 'react';
 
 import AlertActions from '../actions/alertActions';
-import api from '../api';
-
-const ERR_JOIN = 'There was an error while trying to join the team.';
+import ApiMixin from '../mixins/apiMixin';
+import {t} from '../locale';
 
 const MissingProjectMembership = React.createClass({
+  propTypes: {
+    organization: React.PropTypes.object.isRequired,
+    team: React.PropTypes.object.isRequired
+  },
+
+  mixins: [
+    ApiMixin
+  ],
+
   getInitialState() {
     return {
       loading: false,
@@ -18,7 +26,7 @@ const MissingProjectMembership = React.createClass({
       loading: true
     });
 
-    api.joinTeam({
+    this.api.joinTeam({
       orgId: this.props.organization.slug,
       teamId: this.props.team.slug
     }, {
@@ -33,7 +41,10 @@ const MissingProjectMembership = React.createClass({
           loading: false,
           error: true
         });
-        AlertActions.addAlert(ERR_JOIN, 'error');
+        AlertActions.addAlert({
+            message: 'There was an error while trying to join the team.',
+            type: 'error'
+        });
       }
     });
   },
@@ -48,21 +59,21 @@ const MissingProjectMembership = React.createClass({
           <span className="icon icon-exclamation"></span>
           <p>{'You\'re not a member of this project.'}</p>
           {openMembership ?
-            <p>To view this data you must first join the {team.name} team.</p>
+            <p>{t('To view this data you must first join the %s team.', team.name)}</p>
           :
-            <p>To view this data you must first request access to the {team.name} team.</p>
+            <p>{t('To view this data you must first request access to the %s team.', team.name)}</p>
           }
           <p>
             {this.state.loading ?
               <a className="btn btn-default btn-loading btn-disabled">...</a>
             : (team.isPending ?
-              <a className="btn btn-default btn-disabled">Request Pending</a>
+              <a className="btn btn-default btn-disabled">{t('Request Pending')}</a>
             : (openMembership ?
               <a className="btn btn-default"
-                 onClick={this.joinTeam}>Join Team</a>
+                 onClick={this.joinTeam}>{t('Join Team')}</a>
             :
               <a className="btn btn-default"
-                 onClick={this.joinTeam}>Request Access</a>
+                 onClick={this.joinTeam}>{t('Request Access')}</a>
             ))}
           </p>
         </div>

@@ -1,7 +1,8 @@
 import React from 'react';
-import ConfigStore from '../../stores/configStore';
+import {Link} from 'react-router';
 import Count from '../../components/count';
 import PureRenderMixin from 'react-addons-pure-render-mixin';
+import {t} from '../../locale';
 
 let getPercent = (item, total) => {
   if (total === 0) {
@@ -14,6 +15,13 @@ let getPercent = (item, total) => {
 };
 
 const ProjectTable = React.createClass({
+  propTypes: {
+    projectMap: React.PropTypes.object.isRequired,
+    projectTotals: React.PropTypes.array.isRequired,
+    orgTotal: React.PropTypes.number.isRequired,
+    organization: React.PropTypes.object.isRequired
+  },
+
   mixins: [PureRenderMixin],
 
   render() {
@@ -21,7 +29,6 @@ const ProjectTable = React.createClass({
     let projectTotals = this.props.projectTotals;
     let orgTotal = this.props.orgTotal;
     let org = this.props.organization;
-    let urlPrefix = ConfigStore.get('urlPrefix') + '/' + org.slug;
 
     if (!projectTotals) {
       return <div/>;
@@ -36,11 +43,11 @@ const ProjectTable = React.createClass({
       <table className="table simple-list project-list">
         <thead>
           <tr>
-            <th>Project</th>
-            <th className="align-right">Accepted</th>
-            <th className="align-right">Dropped<br/>(Rate Limit)</th>
-            <th className="align-right">Dropped<br/>(Blacklist)</th>
-            <th className="align-right">Total</th>
+            <th>{t('Project')}</th>
+            <th className="align-right">{t('Accepted')}</th>
+            <th className="align-right">{t('Dropped')}<br/>{t('(Rate Limit)')}</th>
+            <th className="align-right">{t('Dropped')}<br/>{t('(Blacklist)')}</th>
+            <th className="align-right">{t('Total')}</th>
           </tr>
         </thead>
         <tbody>
@@ -50,7 +57,7 @@ const ProjectTable = React.createClass({
             return (
               <tr key={item.id}>
                 <td>
-                  <a href={urlPrefix + '/' + project.slug + '/'}>{project.team.name} / {project.name}</a>
+                  <Link to={`/${org.slug}/${project.slug}/`}>{project.team.name} / {project.name}</Link>
                 </td>
                 <td className="align-right">
                   <Count value={item.accepted} /><br/>

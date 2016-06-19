@@ -1,10 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
+import {t} from '../locale';
 
 const ClippedBox = React.createClass({
   propTypes: {
     title: React.PropTypes.string,
-    defaultClipped: React.PropTypes.bool
+    defaultClipped: React.PropTypes.bool,
+    clipHeight: React.PropTypes.number
   },
 
   getDefaultProps() {
@@ -33,7 +35,9 @@ const ClippedBox = React.createClass({
     }
   },
 
-  reveal() {
+  reveal(e) {
+    e.stopPropagation();
+
     this.setState({
       clipped: false
     });
@@ -52,7 +56,9 @@ const ClippedBox = React.createClass({
         }
         {this.props.children}
         <div className="clip-fade">
-          <a onClick={this.reveal} className="show-more btn btn-primary btn-xs">Show more</a>
+          <a onClick={this.reveal} className="show-more btn btn-primary btn-xs">
+            {t('Show more')}
+          </a>
         </div>
       </div>
     );

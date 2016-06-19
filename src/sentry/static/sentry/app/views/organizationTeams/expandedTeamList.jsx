@@ -2,22 +2,41 @@ import React from 'react';
 import {Link} from 'react-router';
 import LazyLoad from 'react-lazy-load';
 
-import api from '../../api';
+import ApiMixin from '../../mixins/apiMixin';
+import {update as projectUpdate} from '../../actionCreators/projects';
 import BarChart from '../../components/barChart';
+import ProjectLabel from '../../components/projectLabel';
 import ConfigStore from '../../stores/configStore';
 import PropTypes from '../../proptypes';
+import TooltipMixin from '../../mixins/tooltip';
 import {sortArray} from '../../utils';
+import {t, tct} from '../../locale';
 
 const ExpandedTeamList = React.createClass({
   propTypes: {
+    access: React.PropTypes.object.isRequired,
     organization: PropTypes.Organization.isRequired,
     teamList: React.PropTypes.arrayOf(PropTypes.Team).isRequired,
-    projectStats: React.PropTypes.object
+    projectStats: React.PropTypes.object,
+    hasTeams: React.PropTypes.bool
   },
+
+  mixins: [
+    ApiMixin,
+    TooltipMixin(function () {
+      return {
+        selector: '.tip',
+        title: function (instance) {
+          return (this.getAttribute('data-isbookmarked') === 'true' ?
+            'Remove from bookmarks' : 'Add to bookmarks');
+        }
+      };
+    })
+  ],
 
   leaveTeam(team) {
     // TODO(dcramer): handle loading indicator
-    api.leaveTeam({
+    this.api.leaveTeam({
       orgId: this.props.organization.slug,
       teamId: team.slug
     });
@@ -28,80 +47,91 @@ const ExpandedTeamList = React.createClass({
     return ConfigStore.get('urlPrefix') + '/organizations/' + org.slug;
   },
 
+  renderProjectList(team) {
+    return (
+      <tbody>
+        {sortArray(team.projects, function(o) {
+          return o.name;
+        }).map(this.renderProject)}
+      </tbody>
+    );
+  },
+
+  renderNoProjects(team) {
+    return (
+      <tbody>
+        <tr>
+          <td>
+            <p className="project-list-empty">
+              {tct('There are no projects in this team. Get started by [link:creating your first project].', {
+                link: <a href={this.urlPrefix() + '/projects/new/?team=' + team.slug} />
+              })}
+            </p>
+          </td>
+        </tr>
+      </tbody>
+    );
+  },
+
   renderTeamNode(team, urlPrefix) {
     // TODO: make this cleaner
-    if (team.projects.length) {
-      return (
-        <div className="box" key={team.slug}>
-          <div className="box-header">
-            <div className="pull-right actions hidden-xs">
-              <a className="leave-team" onClick={this.leaveTeam.bind(this, team)}>
-                Leave Team
-              </a>
-              <a className="team-settings" href={urlPrefix + '/teams/' + team.slug + '/settings/'}>
-                Team Settings
-              </a>
-            </div>
-            <h3>{team.name}</h3>
+    let access = this.props.access;
+    let orgId = this.props.organization.slug;
+    return (
+      <div className="box" key={team.slug}>
+        <div className="box-header">
+          <div className="pull-right actions hidden-xs">
+            <a className="leave-team" onClick={this.leaveTeam.bind(this, team)}>
+              {t('Leave Team')}
+            </a>
+            {access.has('team:write') &&
+              <Link className="team-settings" to={`/organizations/${orgId}/teams/${team.slug}/settings/`}>
+                {t('Team Settings')}
+              </Link>
+            }
           </div>
-          <div className="box-content">
-            <table className="table project-list">
-              <tbody>{sortArray(team.projects, function(o) {
-                return o.name;
-              }).map(this.renderProject)}</tbody>
-            </table>
-          </div>
+          <h3>{team.name}</h3>
         </div>
-      );
-    } else {
-      return (
-        <div className="box" key={team.slug}>
-          <div className="box-header">
-            <div className="pull-right actions hidden-xs">
-              <a className="leave-team" onClick={this.leaveTeam.bind(this, team)}>
-                Leave Team
-              </a>
-              <a className="team-settings" href={urlPrefix + '/teams/' + team.slug + '/settings/'}>
-                Team Settings
-              </a>
-            </div>
-            <h3>{team.name}</h3>
-          </div>
-          <div className="box-content">
-            <table className="table project-list">
-              <tbody>
-                <tr>
-                  <td>
-                    <p className="project-list-empty">
-                      {'There are no projects in this team. Get started by '}
-                      <a href={this.urlPrefix() + '/projects/new/?team=' + team.slug}>creating your first project</a>.
-                    </p>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+        <div className="box-content">
+          <table className="table project-list">
+            {team.projects.length ?
+              this.renderProjectList(team)
+            :
+              this.renderNoProjects(team)
+            }
+          </table>
         </div>
-      );
-    }
+      </div>
+    );
+  },
+
+  toggleBookmark(project) {
+    projectUpdate(this.api, {
+      orgId: this.props.organization.slug,
+      projectId: project.slug,
+      data: {
+        isBookmarked: !project.isBookmarked
+      }
+    });
   },
 
   renderProject(project) {
     let org = this.props.organization;
-    let projectStats = this.props.projectStats;
-    let chartData = null;
-    if (projectStats[project.id]) {
-      chartData = projectStats[project.id].map((point) => {
-        return {x: point[0], y: point[1]};
-      });
-    }
+    let chartData = project.stats && project.stats.map(point => {
+      return {x: point[0], y: point[1]};
+    });
 
     return (
-      <tr key={project.id}>
+      <tr key={project.id} className={project.isBookmarked ? 'isBookmarked' : null}>
         <td>
           <h5>
+            <a onClick={this.toggleBookmark.bind(this, project)}
+               className="tip"
+               data-isbookmarked={project.isBookmarked}>
+              {project.isBookmarked ? <span className="icon-star-solid bookmark" /> : <span className="icon-star-outline bookmark" />}
+            </a>
             <Link to={`/${org.slug}/${project.slug}/`}>
-              {project.name}
+              <ProjectLabel project={project} organization={this.props.organization}/>
             </Link>
           </h5>
         </td>
@@ -112,36 +142,30 @@ const ExpandedTeamList = React.createClass({
     );
   },
 
-  showAllTeams(e) {
-    e.preventDefault();
-    this.props.showAllTeams();
-  },
-
   renderEmpty() {
     if (this.props.hasTeams) {
       return (
         <p>
-          {'You are not a member of any teams. '}
-          <a onClick={this.showAllTeams}>Join an existing team</a>
-          {' or '}
-          <a href={this.urlPrefix() + '/teams/new/'}>create a new one</a>
-          {'.'}
+          {tct('You are not a member of any teams. [joinLink:Join an existing team] or [createLink:create a new one].', {
+            joinLink: <Link to={`/organizations/${this.props.organization.slug}/all-teams/`}/>,
+            createLink: <a href={this.urlPrefix() + '/teams/new/'} />
+          })}
         </p>
       );
 
     }
     return (
       <p>
-        {'You dont have any teams for this organization yet. Get started by '}
-        <a href={this.urlPrefix() + '/teams/new/'}>creating your first team</a>.
+        {tct('You dont have any teams for this organization yet. Get started by [link:creating your first team].', {
+          link: <a href={this.urlPrefix() + '/teams/new/'} />
+        })}
       </p>
     );
   },
 
   renderTeamNodes() {
-    let urlPrefix = this.urlPrefix();
     return this.props.teamList.map((team) => {
-      return this.renderTeamNode(team, urlPrefix);
+      return this.renderTeamNode(team);
     });
   },
 

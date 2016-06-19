@@ -23,39 +23,21 @@ the connection information:
 .. code-block:: python
 
     SENTRY_QUOTAS = 'sentry.quotas.redis.RedisQuota'
-    SENTRY_QUOTA_OPTIONS = {
-        'hosts': {
-            0: {
-                'host': 'localhost',
-                'port': 6379
-            }
-        }
-    }
 
-You also have the ability to specify multiple nodes and have keys automatically
-distributed. It's unlikely that you'll need this functionality, but if you do, a simple
-configuration might look like this:
+By default, this will use the ``default`` named Redis cluster. To use a
+different cluster, provide the ``cluster`` option, as such:
 
 .. code-block:: python
 
     SENTRY_QUOTA_OPTIONS = {
-        'hosts': {
-            0: {
-                'host': '192.168.1.1'
-            },
-            1: {
-                'host': '192.168.1.2'
-            }
-        },
+        'cluster': 'quota',
     }
 
+You can also configure the system-wide maximum per-minute rate limit:
 
-You can also configure system-wide maximums, and a default value for all projects:
+.. code-block:: yaml
 
-.. code-block:: python
-
-   SENTRY_DEFAULT_MAX_EVENTS_PER_MINUTE = '90%'
-   SENTRY_SYSTEM_MAX_EVENTS_PER_MINUTE = 500
+   system.rate-limit: 500
 
 If you have additional needs, you're freely available to extend the base
 Quota class just as the Redis implementation does.
@@ -72,17 +54,17 @@ Configuration
 
 Like event quotas, the primary implementation uses Redis:
 
-
 .. code-block:: python
 
     SENTRY_RATELIMITER = 'sentry.ratelimits.redis.RedisRateLimiter'
+
+By default, this will use the ``default`` named Redis cluster. To use a
+different cluster, provide the ``cluster`` option, as such:
+
+.. code-block:: python
+
     SENTRY_RATELIMITER_OPTIONS = {
-        'hosts': {
-            0: {
-                'host': 'localhost',
-                'port': 6379
-            }
-        }
+        'cluster': 'ratelimiter',
     }
 
 

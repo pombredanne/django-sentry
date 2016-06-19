@@ -1,15 +1,16 @@
 import jQuery from 'jquery';
 import Reflux from 'reflux';
-import AlertActions from '../actions/alertActions';
 import GroupActions from '../actions/groupActions';
+import IndicatorStore from '../stores/indicatorStore';
 import utils from '../utils';
+import {t} from '../locale';
 
-const ERR_CHANGE_ASSIGNEE = 'Unable to change assignee. Please try again.';
-const ERR_SCHEDULE_DELETE = 'Unable to delete events. Please try again.';
-const ERR_SCHEDULE_MERGE = 'Unable to merge events. Please try again.';
-const ERR_UPDATE = 'Unable to update events. Please try again.';
-const OK_SCHEDULE_DELETE = 'The selected events have been scheduled for deletion.';
-const OK_SCHEDULE_MERGE = 'The selected events have been scheduled for merge.';
+
+function showAlert(msg, type) {
+  IndicatorStore.add(msg, type, {
+    duration: 4000
+  });
+}
 
 const GroupStore = Reflux.createStore({
   listenables: [GroupActions],
@@ -51,13 +52,15 @@ const GroupStore = Reflux.createStore({
       itemIds.add(item.id);
     });
 
-    items.forEach((item, idx) => {
+    // See if any existing items are updated by this new set of items
+    this.items.forEach((item, idx) => {
       if (itemsById[item.id]) {
         this.items[idx] = jQuery.extend(true, {}, item, itemsById[item.id]);
         delete itemsById[item.id];
       }
     });
 
+    // New items
     for (let itemId in itemsById) {
       this.items.push(itemsById[itemId]);
     }
@@ -213,7 +216,7 @@ const GroupStore = Reflux.createStore({
   // TODO(dcramer): This is not really the best place for this
   onAssignToError(changeId, itemId, error) {
     this.clearStatus(itemId, 'assignTo');
-    AlertActions.addAlert(ERR_CHANGE_ASSIGNEE, 'error');
+    showAlert(t('Unable to change assignee. Please try again.'), 'error');
   },
 
   onAssignToSuccess(changeId, itemId, response) {
@@ -237,7 +240,7 @@ const GroupStore = Reflux.createStore({
     itemIds.forEach(itemId => {
       this.clearStatus(itemId, 'delete');
     });
-    AlertActions.addAlert(ERR_SCHEDULE_DELETE, 'error');
+    showAlert(t('Unable to delete events. Please try again.'), 'error');
     this.trigger(new Set(itemIds));
   },
 
@@ -248,11 +251,13 @@ const GroupStore = Reflux.createStore({
       this.clearStatus(itemId, 'delete');
     });
     this.items = this.items.filter((item) => !itemIdSet.has(item.id));
-    AlertActions.addAlert(OK_SCHEDULE_DELETE, 'success');
+    showAlert(t('The selected events have been scheduled for deletion.'), 'success');
     this.trigger(new Set(itemIds));
   },
 
   onMerge(changeId, itemIds) {
+    itemIds = this._itemIdsOrAll(itemIds);
+
     itemIds.forEach(itemId => {
       this.addStatus(itemId, 'merge');
     });
@@ -260,14 +265,18 @@ const GroupStore = Reflux.createStore({
   },
 
   onMergeError(changeId, itemIds, response) {
+    itemIds = this._itemIdsOrAll(itemIds);
+
     itemIds.forEach(itemId => {
       this.clearStatus(itemId, 'merge');
     });
-    AlertActions.addAlert(ERR_SCHEDULE_MERGE, 'error');
+    showAlert(t('Unable to merge events. Please try again.'), 'error');
     this.trigger(new Set(itemIds));
   },
 
   onMergeSuccess(changeId, mergedIds, response) {
+    mergedIds = this._itemIdsOrAll(mergedIds); // everything on page
+
     mergedIds.forEach(itemId => {
       this.clearStatus(itemId, 'merge');
     });
@@ -278,14 +287,23 @@ const GroupStore = Reflux.createStore({
       (item) => !mergedIdSet.has(item.id) || item.id === response.merge.parent
     );
 
-    AlertActions.addAlert(OK_SCHEDULE_MERGE, 'success');
+    showAlert(t('The selected events have been scheduled for merge.'), 'success');
     this.trigger(new Set(mergedIds));
   },
 
-  onUpdate(changeId, itemIds, data) {
+  /**
+   * If itemIds is undefined, returns all ids in the store
+   */
+  _itemIdsOrAll(itemIds) {
     if (typeof itemIds === 'undefined') {
       itemIds = this.items.map(item => item.id);
     }
+    return itemIds;
+  },
+
+  onUpdate(changeId, itemIds, data) {
+    itemIds = this._itemIdsOrAll(itemIds);
+
     itemIds.forEach(itemId => {
       this.addStatus(itemId, 'update');
       this.pendingChanges.push(changeId, itemId, data);
@@ -294,20 +312,21 @@ const GroupStore = Reflux.createStore({
   },
 
   onUpdateError(changeId, itemIds, error, failSilently) {
+    itemIds = this._itemIdsOrAll(itemIds);
+
     this.pendingChanges.remove(changeId);
     itemIds.forEach(itemId => {
       this.clearStatus(itemId, 'update');
     });
     if (!failSilently) {
-      AlertActions.addAlert(ERR_UPDATE, 'error');
+      showAlert(t('Unable to update events. Please try again.'), 'error');
     }
     this.trigger(new Set(itemIds));
   },
 
   onUpdateSuccess(changeId, itemIds, response) {
-    if (typeof itemIds === 'undefined') {
-      itemIds = this.items.map(item => item.id);
-    }
+    itemIds = this._itemIdsOrAll(itemIds);
+
     this.items.forEach((item, idx) => {
       if (itemIds.indexOf(item.id) !== -1) {
         this.items[idx] = jQuery.extend(true, {}, item, response);

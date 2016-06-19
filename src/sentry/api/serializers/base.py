@@ -12,7 +12,9 @@ def serialize(objects, user=None, serializer=None):
 
     if not objects:
         return objects
-    elif not isinstance(objects, (list, tuple)):
+    # sets aren't predictable, so generally you should use a list, but it's
+    # supported out of convenience
+    elif not isinstance(objects, (list, tuple, set, frozenset)):
         return serialize([objects], user=user, serializer=serializer)[0]
 
     # elif isinstance(obj, dict):
@@ -29,7 +31,13 @@ def serialize(objects, user=None, serializer=None):
         else:
             return objects
 
-    attrs = serializer.get_attrs(item_list=objects, user=user)
+    attrs = serializer.get_attrs(
+        # avoid passing NoneType's to the serializer as they're allowed and
+        # filtered out of serialize()
+        item_list=[o for o in objects if o is not None],
+        user=user,
+    )
+
     return [serializer(o, attrs=attrs.get(o, {}), user=user) for o in objects]
 
 

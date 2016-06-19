@@ -6,17 +6,20 @@ import EventErrors from './errors';
 import EventExtraData from './extraData';
 import EventPackageData from './packageData';
 import EventTags from './eventTags';
-import EventMessage from './message';
+import EventSdk from './sdk';
+import EventDevice from './device';
 import EventUser from './user';
+import EventUserReport from './userReport';
 import PropTypes from '../../proptypes';
 import utils from '../../utils';
+import {t} from '../../locale';
 
 const EventEntries = React.createClass({
   propTypes: {
     group: PropTypes.Group.isRequired,
     event: PropTypes.Event.isRequired,
     orgId: React.PropTypes.string.isRequired,
-    projectId: React.PropTypes.string.isRequired,
+    project: React.PropTypes.object.isRequired,
     // TODO(dcramer): ideally isShare would be replaced with simple permission
     // checks
     isShare: React.PropTypes.bool
@@ -35,16 +38,19 @@ const EventEntries = React.createClass({
   // TODO(dcramer): make this extensible
   interfaces: {
     exception: require('./interfaces/exception'),
+    message: require('./interfaces/message'),
     request: require('./interfaces/request'),
     stacktrace: require('./interfaces/stacktrace'),
     template: require('./interfaces/template'),
     csp: require('./interfaces/csp'),
+    breadcrumbs: require('./interfaces/breadcrumbs'),
   },
 
-  render(){
+  render() {
     let group = this.props.group;
     let evt = this.props.event;
     let isShare = this.props.isShare;
+    let project = this.props.project;
 
     let entries = evt.entries.map((entry, entryIdx) => {
       try {
@@ -71,28 +77,29 @@ const EventEntries = React.createClass({
               event={evt}
               type={entry.type}
               title={entry.type}>
-            <p>There was an error rendering this data.</p>
+            <p>{t('There was an error rendering this data.')}</p>
           </EventDataSection>
         );
       }
     });
 
-    let {orgId, projectId} = this.props;
     return (
       <div>
+        {evt.userReport &&
+          <EventUserReport
+            group={group}
+            event={evt} />
+        }
         {!utils.objectIsEmpty(evt.errors) &&
           <EventErrors
             group={group}
             event={evt} />
         }
-        <EventMessage
-          group={group}
-          event={evt} />
         <EventTags
           group={group}
           event={evt}
-          orgId={orgId}
-          projectId={projectId} />
+          orgId={this.props.orgId}
+          projectId={project.slug} />
         {!utils.objectIsEmpty(evt.user) &&
           <EventUser
             group={group}
@@ -106,6 +113,16 @@ const EventEntries = React.createClass({
         }
         {!utils.objectIsEmpty(evt.packages) &&
           <EventPackageData
+            group={group}
+            event={evt} />
+        }
+        {!utils.objectIsEmpty(evt.device) &&
+          <EventDevice
+            group={group}
+            event={evt} />
+        }
+        {!utils.objectIsEmpty(evt.sdk) &&
+          <EventSdk
             group={group}
             event={evt} />
         }

@@ -3,17 +3,20 @@ import PureRenderMixin from 'react-addons-pure-render-mixin';
 import React from 'react';
 import SelectedGroupStore from '../../stores/selectedGroupStore';
 import TooltipMixin from '../../mixins/tooltip';
+import {t} from '../../locale';
 
+// TODO(mitsuhiko): very unclear how to translate this
 const ActionLink = React.createClass({
   propTypes: {
-    actionLabel: React.PropTypes.string,
-    canActionAll: React.PropTypes.bool.isRequired,
-    confirmLabel: React.PropTypes.string,
+    confirmationQuestion: React.PropTypes.any,
+    buttonTitle: React.PropTypes.string,
+    confirmLabel: React.PropTypes.any,
     disabled: React.PropTypes.bool,
-    neverConfirm: React.PropTypes.bool,
     onAction: React.PropTypes.func.isRequired,
     onlyIfBulk: React.PropTypes.bool,
-    selectAllActive: React.PropTypes.bool.isRequired
+    selectAllActive: React.PropTypes.bool.isRequired, // "select all" checkbox
+    tooltip: React.PropTypes.string,
+    extraDescription: React.PropTypes.string
   },
 
   mixins: [
@@ -26,13 +29,10 @@ const ActionLink = React.createClass({
 
   getDefaultProps() {
     return {
-      actionTypes: {},
       buttonTitle: null, // title="..." (optional)
-      canActionAll: false,
-      confirmLabel: 'Edit',
       onlyIfBulk: false,
-      neverConfirm: false,
-      disabled: false
+      disabled: false,
+      extraDescription: null,
     };
   },
 
@@ -45,7 +45,7 @@ const ActionLink = React.createClass({
   handleClick() {
     let selectedItemIds = SelectedGroupStore.getSelectedIds();
     if (!this.state.isModalOpen && !this.shouldConfirm(selectedItemIds.size)) {
-      return void this.handleActionSelected();
+      return void this.handleAction();
     }
 
     this.handleToggle();
@@ -60,34 +60,19 @@ const ActionLink = React.createClass({
     });
   },
 
-  handleActionAll(evt) {
-    this.props.onAction(evt, this.props.actionTypes.ALL);
+  handleAction(evt) {
+    this.props.onAction(evt);
     this.setState({
       isModalOpen: false
     });
-  },
-
-  handleActionSelected(evt) {
-    this.props.onAction(evt, this.props.actionTypes.SELECTED);
-    this.setState({
-      isModalOpen: false
-    });
-  },
-
-  defaultActionLabel(confirmLabel) {
-    return confirmLabel.toLowerCase() + ' these {count} events';
   },
 
   shouldConfirm(numSelectedItems) {
     // By default, should confirm ...
     let shouldConfirm = true;
 
-    // Unless `neverConfirm` is true, then return false
-    if (this.props.neverConfirm === true) {
-      shouldConfirm = false;
-
     // Unless `onlyIfBulk` is true, then return false if all items are not selected
-    } else if (this.props.onlyIfBulk === true && (!this.props.selectAllActive || numSelectedItems === 1)) {
+    if (this.props.onlyIfBulk === true && (!this.props.selectAllActive || numSelectedItems === 1)) {
       shouldConfirm = false;
     }
 
@@ -101,11 +86,16 @@ const ActionLink = React.createClass({
     }
     className += ' tip';
 
-
-    let confirmLabel = this.props.confirmLabel;
     let numEvents = SelectedGroupStore.getSelectedIds().size;
-    let actionLabel = this.props.actionLabel || this.defaultActionLabel(confirmLabel);
-    actionLabel = actionLabel.replace('{count}', numEvents);
+
+    function resolveLabel(obj) {
+      if (typeof obj === 'function') {
+        return obj(numEvents);
+      }
+      return obj;
+    }
+
+    let confirmationQuestion = resolveLabel(this.props.confirmationQuestion);
 
     return (
       <a title={this.props.tooltip || this.props.buttonTitle}
@@ -114,20 +104,19 @@ const ActionLink = React.createClass({
          onClick={this.handleClick}>
         {this.props.children}
 
-        <Modal show={this.state.isModalOpen} title="Please confirm" animation={false} onHide={this.handleToggle}>
+        <Modal show={this.state.isModalOpen} title={t('Please confirm')} animation={false} onHide={this.handleToggle}>
           <div className="modal-body">
-            <p><strong>Are you sure that you want to {this.props.actionLabel}?</strong></p>
-            <p>This action cannot be undone.</p>
+            <p><strong>{confirmationQuestion}</strong></p>
+            {this.props.extraDescription}
+            <p>{t('This action cannot be undone.')}</p>
           </div>
           <div className="modal-footer">
             <button type="button" className="btn btn-default"
-                    onClick={this.handleToggle}>Cancel</button>
-            {this.props.canActionAll &&
-              <button type="button" className="btn btn-danger"
-                      onClick={this.handleActionAll}>{confirmLabel} all recorded events</button>
-            }
+                    onClick={this.handleToggle}>{t('Cancel')}</button>
             <button type="button" className="btn btn-primary"
-                    onClick={this.handleActionSelected}>{confirmLabel} {numEvents} selected events</button>
+                    onClick={this.handleAction}>
+              {resolveLabel(this.props.confirmLabel)}
+            </button>
           </div>
         </Modal>
       </a>

@@ -1,23 +1,32 @@
 import React from 'react';
 import Reflux from 'reflux';
-import api from '../api';
+import ApiMixin from '../mixins/apiMixin';
 import DocumentTitle from 'react-document-title';
 import GroupHeader from './groupDetails/header';
 import GroupStore from '../stores/groupStore';
 import LoadingError from '../components/loadingError';
 import LoadingIndicator from '../components/loadingIndicator';
 import PropTypes from '../proptypes';
+import {t} from '../locale';
+import {History} from 'react-router';
 
 let ERROR_TYPES = {
   GROUP_NOT_FOUND: 'GROUP_NOT_FOUND'
 };
 
 const GroupDetails = React.createClass({
+  propTypes: {
+    setProjectNavSection: React.PropTypes.func,
+    memberList: React.PropTypes.array
+  },
+
   childContextTypes: {
     group: PropTypes.Group,
   },
 
   mixins: [
+    ApiMixin,
+    History,
     Reflux.listenTo(GroupStore, 'onGroupChange')
   ],
 
@@ -41,13 +50,42 @@ const GroupDetails = React.createClass({
     this.fetchData();
   },
 
+  componentWillReceiveProps(nextProps) {
+    if (nextProps.params.groupId !== this.props.params.groupId) {
+      this.remountComponent();
+    }
+  },
+
+  componentDidUpdate(prevProps, prevState) {
+    if (prevProps.params.groupId !== this.props.params.groupId) {
+      this.fetchData();
+    }
+  },
+
   remountComponent() {
-    this.setState(this.getInitialState(), this.fetchData);
+    this.setState(this.getInitialState());
   },
 
   fetchData() {
-    api.request(this.getGroupDetailsEndpoint(), {
+    this.api.request(this.getGroupDetailsEndpoint(), {
       success: (data) => {
+        // TODO: Ideally, this would rebuild the route before parameter
+        // interpolation, replace the `groupId` field of `this.routeParams`,
+        // and use `formatPattern` from `react-router` to rebuild the URL,
+        // rather than blindly pattern matching like we do here. Unfortunately,
+        // `formatPattern` isn't actually exported until `react-router` 2.0.1:
+        // https://github.com/reactjs/react-router/blob/v2.0.1/modules/index.js#L25
+        if (this.props.params.groupId != data.id) {
+          let location = this.props.location;
+          return void this.history.pushState(
+            null,
+            location.pathname.replace(
+              `/issues/${this.props.params.groupId}/`,
+              `/issues/${data.id}/`
+            ) + location.search + location.hash
+          );
+        }
+
         this.setState({
           loading: false,
           error: false,
@@ -84,7 +122,7 @@ const GroupDetails = React.createClass({
   getGroupDetailsEndpoint() {
     let id = this.props.params.groupId;
 
-    return '/groups/' + id + '/';
+    return '/issues/' + id + '/';
   },
 
   getTitle() {
@@ -101,7 +139,9 @@ const GroupDetails = React.createClass({
       switch (this.state.errorType) {
         case ERROR_TYPES.GROUP_NOT_FOUND:
           return (
-            <div className="alert alert-block">The issue you were looking for was not found.</div>
+            <div className="alert alert-block">
+              {t('The issue you were looking for was not found.')}
+            </div>
           );
         default:
           return <LoadingError onRetry={this.remountComponent} />;

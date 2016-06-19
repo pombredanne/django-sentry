@@ -9,6 +9,7 @@ sentry.templatetags.sentry_helpers
 #      INSTALLED_APPS
 from __future__ import absolute_import
 
+import functools
 import os.path
 import pytz
 import six
@@ -19,10 +20,11 @@ from datetime import timedelta
 from paging.helpers import paginate as paginate_func
 from pkg_resources import parse_version as Version
 from six.moves import range
-from urllib import quote
+from urllib import quote, urlencode
 
 from django import template
 from django.conf import settings
+from django.core.urlresolvers import reverse
 from django.template import RequestContext
 from django.template.defaultfilters import stringfilter
 from django.template.loader import render_to_string
@@ -34,12 +36,20 @@ from django.utils.translation import ugettext as _
 from sentry import options
 from sentry.api.serializers import serialize as serialize_func
 from sentry.constants import EVENTS_PER_PAGE
-from sentry.models import Organization
-from sentry.utils import json, to_unicode
-from sentry.utils.avatar import get_gravatar_url
-from sentry.utils.http import absolute_uri
+from sentry.models import UserAvatar, Organization
+from sentry.utils import json
+from sentry.utils.strings import to_unicode
+from sentry.utils.avatar import (
+    get_gravatar_url,
+    get_email_avatar,
+    get_letter_avatar
+)
 from sentry.utils.javascript import to_json
-from sentry.utils.strings import truncatechars
+from sentry.utils.strings import (
+    soft_break as _soft_break,
+    soft_hyphenate,
+    truncatechars,
+)
 from templatetag_sugar.register import tag
 from templatetag_sugar.parser import Name, Variable, Constant, Optional
 
@@ -55,7 +65,11 @@ truncatechars.is_safe = True
 
 register.filter(to_json)
 
-register.simple_tag(absolute_uri)
+
+@register.simple_tag
+def absolute_uri(path='', *args):
+    from sentry.utils.http import absolute_uri
+    return absolute_uri(path.format(*args))
 
 
 @register.filter
@@ -292,6 +306,36 @@ def gravatar_url(context, email, size=None, default='mm'):
     return get_gravatar_url(email, size, default)
 
 
+@tag(register, [Variable('display_name'),
+                Variable('identifier'),
+                Optional([Constant('size'), Variable('size')])])
+def letter_avatar_svg(context, display_name, identifier, size=None):
+    return get_letter_avatar(display_name, identifier, size=size)
+
+
+@tag(register, [Variable('user_id'),
+                Optional([Constant('size'), Variable('size')])])
+def profile_photo_url(context, user_id, size=None):
+    try:
+        avatar = UserAvatar.objects.get(user__id=user_id)
+    except UserAvatar.DoesNotExist:
+        return
+    url = reverse('sentry-user-avatar-url', args=[avatar.ident])
+    if size:
+        url += '?' + urlencode({'s': size})
+    return settings.SENTRY_URL_PREFIX + url
+
+
+# Don't use this in any situations where you're rendering more
+# than 1-2 avatars. It will make a request for every user!
+@tag(register, [Variable('display_name'),
+                Variable('identifier'),
+                Optional([Constant('size'), Variable('size')]),
+                Optional([Constant('try_gravatar'), Variable('try_gravatar')])])
+def email_avatar(context, display_name, identifier, size=None, try_gravatar=True):
+    return get_email_avatar(display_name, identifier, size, try_gravatar)
+
+
 @register.filter
 def trim_schema(value):
     return value.split('//', 1)[-1]
@@ -365,7 +409,7 @@ def basename(value):
 
 @register.filter
 def user_display_name(user):
-    return user.first_name or user.username
+    return user.name or user.username
 
 
 @register.simple_tag(takes_context=True)
@@ -412,3 +456,12 @@ def load_captcha():
     return {
         'api_key': settings.RECAPTCHA_PUBLIC_KEY,
     }
+
+
+@register.filter
+def soft_break(value, length):
+    return _soft_break(
+        value,
+        length,
+        functools.partial(soft_hyphenate, length=max(length // 10, 10)),
+    )

@@ -10,6 +10,7 @@ const ListLink = React.createClass({
     to: React.PropTypes.string.isRequired,
     query: React.PropTypes.object,
     onClick: React.PropTypes.func,
+    index: React.PropTypes.bool,
 
     // If supplied by parent component, decides whether link element
     // is "active" or not ... overriding default behavior of strict
@@ -21,12 +22,15 @@ const ListLink = React.createClass({
 
   getDefaultProps() {
     return {
-      activeClassName: 'active'
+      activeClassName: 'active',
+      onlyActiveOnIndex: false,
     };
   },
 
   isActive() {
-    return (this.props.isActive || this.history.isActive)(this.props.to, this.props.query);
+    return (this.props.isActive || this.history.isActive)(
+      this.props.to, this.props.query, this.props.index
+    );
   },
 
   getClassName() {
@@ -44,9 +48,7 @@ const ListLink = React.createClass({
   render() {
     return (
       <li className={this.getClassName()}>
-        <Link {...this.props}>
-          {this.props.children}
-        </Link>
+        <Link {...this.props} onlyActiveOnIndex={this.props.index}>{this.props.children}</Link>
       </li>
     );
   }

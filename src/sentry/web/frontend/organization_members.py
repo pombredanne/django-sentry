@@ -4,8 +4,7 @@ from django.db.models import Q
 
 from sentry import roles
 from sentry.models import (
-    AuthProvider, OrganizationAccessRequest, OrganizationMember,
-    OrganizationMemberTeam
+    AuthProvider, Authenticator, OrganizationAccessRequest, OrganizationMember
 )
 from sentry.web.frontend.base import OrganizationView
 
@@ -24,23 +23,25 @@ class OrganizationMembersView(OrganizationView):
         except AuthProvider.DoesNotExist:
             auth_provider = None
 
+        oms = list(queryset)
+
+        authenticators = Authenticator.objects.bulk_users_have_2fa([om.user_id for om in oms])
+
         member_list = []
-        for om in queryset:
+        for om in oms:
             needs_sso = bool(auth_provider and not getattr(om.flags, 'sso:linked'))
-            member_list.append((om, needs_sso))
+            member_list.append((om, needs_sso, authenticators[om.user_id]))
 
         # if the member is not the only owner we allow them to leave the org
         member_can_leave = any(
-            1 for om, _ in member_list
+            1 for om, _, _ in member_list
             if (om.role == roles.get_top_dog().id
                 and om.user != request.user
                 and om.user is not None)
         )
 
-        can_approve_requests_globally = (
-            request.access.has_scope('member:write')
-            or request.access.has_scope('org:write')
-        )
+        # TODO(dcramer): ideally member:write could approve
+        can_approve_requests_globally = request.access.has_scope('org:write')
         can_add_members = request.access.has_scope('org:write')
         can_remove_members = request.access.has_scope('member:delete')
 
@@ -50,13 +51,10 @@ class OrganizationMembersView(OrganizationView):
                 team__organization=organization,
                 member__user__is_active=True,
             ).select_related('team', 'member__user'))
-        elif request.access.has_scope('team:write'):
+        elif request.access.has_scope('team:write') and request.access.teams:
             access_requests = list(OrganizationAccessRequest.objects.filter(
                 member__user__is_active=True,
-                team__in=OrganizationMemberTeam.objects.filter(
-                    organizationmember__organization=organization,
-                    organizationmember__user=request.user,
-                ).values('team'),
+                team__in=request.access.teams,
             ).select_related('team', 'member__user'))
         else:
             access_requests = []

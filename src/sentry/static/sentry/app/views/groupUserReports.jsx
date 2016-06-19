@@ -1,16 +1,18 @@
 import $ from 'jquery';
 import React from 'react';
-import {History} from 'react-router';
-import api from '../api';
-import Gravatar from '../components/gravatar';
+import {Link, History} from 'react-router';
+import ApiMixin from '../mixins/apiMixin';
+import Avatar from '../components/avatar';
 import GroupState from '../mixins/groupState';
 import LoadingError from '../components/loadingError';
 import LoadingIndicator from '../components/loadingIndicator';
 import TimeSince from '../components/timeSince';
 import utils from '../utils';
+import {t} from '../locale';
 
 const GroupUserReports = React.createClass({
   mixins: [
+    ApiMixin,
     GroupState,
     History
   ],
@@ -43,7 +45,7 @@ const GroupUserReports = React.createClass({
       error: false
     });
 
-    api.request('/groups/' + this.getGroup().id + '/user-reports/?' + querystring, {
+    this.api.request('/issues/' + this.getGroup().id + '/user-reports/?' + querystring, {
       success: (data, _, jqXHR) => {
         this.setState({
           error: false,
@@ -61,6 +63,12 @@ const GroupUserReports = React.createClass({
     });
   },
 
+  getUserReportsUrl() {
+    let params = this.props.params;
+
+    return `/${params.orgId}/${params.projectId}/settings/user-feedback/`;
+  },
+
   render() {
     if (this.state.loading) {
       return <LoadingIndicator />;
@@ -73,7 +81,7 @@ const GroupUserReports = React.createClass({
 
       return (
         <li className="activity-note" key={itemIdx}>
-          <Gravatar email={item.email} size={64} className="avatar" />
+          <Avatar user={item} size={64} className="avatar" />
           <div className="activity-bubble">
             <TimeSince date={item.dateCreated} />
             <div className="activity-author">{item.name} <small>{item.email}</small></div>
@@ -99,8 +107,8 @@ const GroupUserReports = React.createClass({
     return (
       <div className="box empty-stream">
         <span className="icon icon-exclamation" />
-        <p>No user reports have been collected for this event.</p>
-        <p><a href="">Learn how to integrate User Crash Reports</a></p>
+        <p>{t('No user reports have been collected for this event.')}</p>
+        <p><Link to={this.getUserReportsUrl()}>{t('Learn how to integrate User Feedback')}</Link></p>
       </div>
     );
   }

@@ -1,8 +1,9 @@
 import React from 'react';
 import moment from 'moment';
+import _ from 'underscore';
 
 import ConfigStore from '../../stores/configStore';
-import Gravatar from '../../components/gravatar';
+import Avatar from '../../components/avatar';
 import GroupState from '../../mixins/groupState';
 import {userDisplayName} from '../../utils/formatters';
 import TooltipMixin from '../../mixins/tooltip';
@@ -20,20 +21,28 @@ const GroupSeenBy = React.createClass({
     let activeUser = ConfigStore.get('user');
     let group = this.getGroup();
 
-    let seenByNodes = group.seenBy.filter((user, userIdx) => {
+    // NOTE: Sometimes group.seenBy is undefined, even though the /groups/{id} API
+    //       endpoint guarantees an array. We haven't figured out HOW GroupSeenBy
+    //       is getting incomplete group records, but in the interim, we are just
+    //       gracefully handing this case.
+    //
+    // See: https://github.com/getsentry/sentry/issues/2387
+
+    let seenBy = group.seenBy || [];
+    if (seenBy.length === 0) {
+      return null;
+    }
+
+    let seenByNodes = seenBy.filter((user, userIdx) => {
       return activeUser.id !== user.id;
     }).map((user, userIdx) => {
-      let title = userDisplayName(user) + '<br/>' + moment(user.lastSeen).format('LL');
+      let title = _.escape(userDisplayName(user)) + '<br/>' + _.escape(moment(user.lastSeen).format('LL'));
       return (
         <li key={userIdx} className="tip" data-title={title}>
-          <Gravatar size={52} email={user.email} />
+          <Avatar size={52} user={user} />
         </li>
       );
     });
-
-    if (seenByNodes.length === 0) {
-      return null;
-    }
 
     return (
       <div className="seen-by">

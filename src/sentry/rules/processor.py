@@ -13,11 +13,31 @@ from sentry.utils.safe import safe_execute
 RuleFuture = namedtuple('RuleFuture', ['rule', 'kwargs'])
 
 
+# TODO(dcramer): come up with a clean way to kill this either by renaming
+# the Event.message attribute or updating all plugins (former is better)
+class EventCompatibilityProxy(object):
+    """
+    A proxy which manages the 'message' attribute on an event to safely
+    upgrade legacy notifications.
+    """
+    __class__ = property(lambda x: x._event.__class__)
+
+    def __init__(self, event):
+        self._event = event
+
+    def __getattr__(self, attr):
+        return getattr(self._event, attr)
+
+    @property
+    def message(self):
+        return self._event.get_legacy_message()
+
+
 class RuleProcessor(object):
     logger = logging.getLogger('sentry.rules')
 
     def __init__(self, event, is_new, is_regression, is_sample):
-        self.event = event
+        self.event = EventCompatibilityProxy(event)
         self.group = event.group
         self.project = event.project
 
@@ -56,7 +76,8 @@ class RuleProcessor(object):
             return
 
         condition_inst = condition_cls(self.project, data=condition, rule=rule)
-        return safe_execute(condition_inst.passes, self.event, state)
+        return safe_execute(condition_inst.passes, self.event, state,
+                            _with_transaction=False)
 
     def get_state(self, rule_status):
         return EventState(
@@ -131,7 +152,8 @@ class RuleProcessor(object):
                 continue
 
             action_inst = action_cls(self.project, data=action, rule=rule)
-            results = safe_execute(action_inst.after, event=self.event, state=state)
+            results = safe_execute(action_inst.after, event=self.event, state=state,
+                                   _with_transaction=False)
             if results is None:
                 self.logger.warn('Action %s did not return any futures', action['id'])
                 continue

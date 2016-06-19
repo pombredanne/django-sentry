@@ -8,12 +8,14 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from sentry.api.base import DocSection
-from sentry.api.bases.project import ProjectEndpoint
+from sentry.api.bases.project import ProjectEndpoint, ProjectReleasePermission
 from sentry.api.exceptions import ResourceDoesNotExist
 from sentry.api.paginator import OffsetPaginator
 from sentry.api.serializers import serialize
-from sentry.models import File, FileBlob, Release, ReleaseFile
+from sentry.models import File, Release, ReleaseFile
 from sentry.utils.apidocs import scenario, attach_scenarios
+
+ERR_FILE_EXISTS = 'A file matching this name already exists for the given release'
 
 
 @scenario('UploadReleaseFile')
@@ -63,8 +65,8 @@ class ConditionalContentNegotiation(DefaultContentNegotiation):
 
 class ReleaseFilesEndpoint(ProjectEndpoint):
     doc_section = DocSection.RELEASES
-
     content_negotiation_class = ConditionalContentNegotiation
+    permission_classes = (ProjectReleasePermission,)
 
     @attach_scenarios([list_files_scenario])
     def get(self, request, project, version):
@@ -91,7 +93,7 @@ class ReleaseFilesEndpoint(ProjectEndpoint):
 
         file_list = ReleaseFile.objects.filter(
             release=release,
-        ).select_related('file', 'file__blob').order_by('name')
+        ).select_related('file').order_by('name')
 
         return self.paginate(
             request=request,
@@ -144,6 +146,8 @@ class ReleaseFilesEndpoint(ProjectEndpoint):
         fileobj = request.FILES['file']
 
         full_name = request.DATA.get('name', fileobj.name)
+        if not full_name:
+            return Response({'detail': 'File name must be specified'}, status=400)
         name = full_name.rsplit('/', 1)[-1]
 
         headers = {
@@ -157,14 +161,12 @@ class ReleaseFilesEndpoint(ProjectEndpoint):
             else:
                 headers[k] = v.strip()
 
-        blob = FileBlob.from_file(fileobj)
-
         file = File.objects.create(
             name=name,
             type='release.file',
             headers=headers,
-            blob=blob,
         )
+        file.putfile(fileobj)
 
         try:
             with transaction.atomic():
@@ -176,6 +178,6 @@ class ReleaseFilesEndpoint(ProjectEndpoint):
                 )
         except IntegrityError:
             file.delete()
-            return Response(status=409)
+            return Response({'detail': ERR_FILE_EXISTS}, status=409)
 
         return Response(serialize(releasefile, request.user), status=201)

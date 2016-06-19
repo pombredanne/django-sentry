@@ -43,6 +43,11 @@ function getRubyFrame(frame) {
   return result;
 }
 
+export function getPHPFrame(frame, idx) {
+  let funcName = (frame.function === 'null' ? '{main}' : frame.function);
+  return `#${idx} ${frame.filename || frame.module}(${frame.lineNo}): ${funcName}`;
+}
+
 export function getPythonFrame(frame) {
   let result = '';
   if (defined(frame.filename)) {
@@ -89,28 +94,72 @@ export function getJavaFrame(frame) {
   return result;
 }
 
-function getFrame(frame, platform) {
+function ljust(str, len) {
+  return str + Array(Math.max(0, len - str.length) + 1).join(' ');
+}
+
+export function getCocoaFrame(frame) {
+  let result = '  ';
+  if (defined(frame.package)) {
+    result += ljust(frame.package, 20);
+  }
+  if (defined(frame.instructionAddr)) {
+    result += ljust(frame.instructionAddr, 12);
+  }
+  result += ' ' + (frame.function || frame.symbolAddr);
+  if (frame.instructionOffset) {
+    result += ' + ' + frame.instructionOffset;
+  }
+  if (defined(frame.filename)) {
+    result += ' (' + frame.filename;
+    if (defined(frame.lineNo) && frame.lineNo >= 0) {
+      result += ':' + frame.lineNo;
+    }
+    result += ')';
+  }
+  return result;
+}
+
+export function getJavaPreamble(exception) {
+  let result = `${exception.type}: ${exception.value}`;
+  if (exception.module) {
+    result = `${exception.module}.${result}`;
+  }
+  return result;
+}
+
+function getPreamble(exception, platform) {
+  switch (platform) {
+    case 'java':
+      return getJavaPreamble(exception);
+    default:
+      return exception.type + ': ' + exception.value;
+  }
+}
+
+function getFrame(frame, frameIdx, platform) {
   switch (platform) {
     case 'javascript':
-      return getJavaScriptFrame(frame);
+      return getJavaScriptFrame(frame, frameIdx);
     case 'ruby':
-      return getRubyFrame(frame);
+      return getRubyFrame(frame, frameIdx);
+    case 'php':
+      return getPHPFrame(frame, frameIdx);
     case 'python':
-      return getPythonFrame(frame);
+      return getPythonFrame(frame, frameIdx);
     case 'java':
-      return getJavaFrame(frame);
+      return getJavaFrame(frame, frameIdx);
+    case 'objc':
+    case 'cocoa':
+      return getCocoaFrame(frame, frameIdx);
     default:
-      return getPythonFrame(frame);
+      return getPythonFrame(frame, frameIdx);
   }
 }
 
 export default function render (data, platform, exception) {
   let firstFrameOmitted, lastFrameOmitted;
-  let children = [];
-
-  if (exception) {
-    children.push(exception.type + ': ' + exception.value);
-  }
+  let frames = [];
 
   if (data.framesOmitted) {
     firstFrameOmitted = data.framesOmitted[0];
@@ -121,14 +170,22 @@ export default function render (data, platform, exception) {
   }
 
   data.frames.forEach((frame, frameIdx) => {
-    children.push(getFrame(frame, platform));
+    frames.push(getFrame(frame, frameIdx, platform));
     if (frameIdx === firstFrameOmitted) {
-      children.push((
+      frames.push((
         '.. frames ' + firstFrameOmitted + ' until ' + lastFrameOmitted + ' were omitted and not available ..'
       ));
     }
 
   });
 
-  return children.join('\n');
+  if (platform !== 'python') {
+    frames.reverse();
+  }
+
+  if (exception) {
+    frames.unshift(getPreamble(exception, platform));
+  }
+
+  return frames.join('\n');
 }

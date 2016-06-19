@@ -48,21 +48,22 @@ class OrganizationAccessRequest(Model):
             subject='Sentry Access Request',
             template='sentry/emails/request-team-access.txt',
             html_template='sentry/emails/request-team-access.html',
+            type='team.access.request',
             context=context,
         )
 
-        roles_capable = [
-            r.id for r in roles.with_scope('team:write')
+        global_roles = [
+            r.id for r in roles.with_scope('org:write')
+            if r.is_global
         ]
-        non_global_roles = [
-            r for r in roles_capable
-            if not roles.get(r).is_global or roles.get(r).has_scope('member:write')
+        team_roles = [
+            r.id for r in roles.with_scope('team:write')
         ]
 
         # find members which are either team scoped or have access to all teams
         member_list = OrganizationMember.objects.filter(
-            Q(role__in=non_global_roles) |
-            Q(teams=self.team, role__in=roles_capable),
+            Q(role__in=global_roles) |
+            Q(teams=self.team, role__in=team_roles),
             organization=self.team.organization,
             user__isnull=False,
         ).select_related('user')
@@ -87,6 +88,7 @@ class OrganizationAccessRequest(Model):
             subject='Sentry Access Request',
             template='sentry/emails/access-approved.txt',
             html_template='sentry/emails/access-approved.html',
+            type='team.access.approved',
             context=context,
         )
 

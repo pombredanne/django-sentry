@@ -2,7 +2,6 @@ from __future__ import absolute_import
 
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import login
 from django.core.urlresolvers import reverse
 from django.db import transaction
 from django.http import HttpResponseRedirect
@@ -10,10 +9,11 @@ from django.utils.translation import ugettext_lazy as _
 from django.views.decorators.cache import never_cache
 
 from sentry import features
-from sentry.models import AuthProvider, Organization
+from sentry.constants import WARN_SESSION_EXPIRED
+from sentry.models import AuthProvider, Organization, OrganizationStatus
 from sentry.web.forms.accounts import AuthenticationForm, RegistrationForm
 from sentry.web.frontend.base import BaseView
-from sentry.utils.auth import get_login_redirect
+from sentry.utils import auth
 
 ERR_NO_SSO = _('The organization does not exist or does not have Single Sign-On enabled.')
 
@@ -24,7 +24,8 @@ class AuthLoginView(BaseView):
     def get_auth_provider(self, organization_slug):
         try:
             organization = Organization.objects.get(
-                slug=organization_slug
+                slug=organization_slug,
+                status=OrganizationStatus.VISIBLE,
             )
         except Organization.DoesNotExist:
             return None
@@ -70,27 +71,34 @@ class AuthLoginView(BaseView):
 
         if can_register and register_form.is_valid():
             user = register_form.save()
+            user.send_confirm_emails(is_new_user=True)
 
             # HACK: grab whatever the first backend is and assume it works
             user.backend = settings.AUTHENTICATION_BACKENDS[0]
 
-            login(request, user)
+            auth.login(request, user)
 
             # can_register should only allow a single registration
             request.session.pop('can_register', None)
 
             request.session.pop('needs_captcha', None)
 
-            return self.redirect(get_login_redirect(request))
+            return self.redirect(auth.get_login_redirect(request))
 
         elif login_form.is_valid():
-            login(request, login_form.get_user())
+            user = login_form.get_user()
+
+            auth.login(request, user)
 
             request.session.pop('needs_captcha', None)
 
-            return self.redirect(get_login_redirect(request))
+            if not user.is_active:
+                return self.redirect(reverse('sentry-reactivate-account'))
+
+            return self.redirect(auth.get_login_redirect(request))
 
         elif request.POST and not request.session.get('needs_captcha'):
+            auth.log_auth_failure(request, request.POST.get('username'))
             request.session['needs_captcha'] = 1
             login_form = self.get_login_form(request)
             login_form.errors.pop('captcha', None)
@@ -144,4 +152,14 @@ class AuthLoginView(BaseView):
                 messages.add_message(request, messages.ERROR, ERR_NO_SSO)
 
             return HttpResponseRedirect(next_uri)
-        return self.handle_basic_auth(request)
+
+        session_expired = 'session_expired' in request.COOKIES
+        if session_expired:
+            messages.add_message(request, messages.WARNING, WARN_SESSION_EXPIRED)
+
+        response = self.handle_basic_auth(request)
+
+        if session_expired:
+            response.delete_cookie('session_expired')
+
+        return response

@@ -2,9 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import Reflux from 'reflux';
 import classNames from 'classnames';
-import api from '../api';
-import Gravatar from '../components/gravatar';
+import ApiMixin from '../mixins/apiMixin';
+import Avatar from '../components/avatar';
 import GroupStore from '../stores/groupStore';
+import ConfigStore from '../stores/configStore';
 import DropdownLink from './dropdownLink';
 import MemberListStore from '../stores/memberListStore';
 import MenuItem from './menuItem';
@@ -12,6 +13,7 @@ import LoadingIndicator from '../components/loadingIndicator';
 import {userDisplayName} from '../utils/formatters';
 import {valueIsEqual} from '../utils';
 import TooltipMixin from '../mixins/tooltip';
+import {t} from '../locale';
 
 const AssigneeSelector = React.createClass({
   propTypes: {
@@ -23,7 +25,8 @@ const AssigneeSelector = React.createClass({
     TooltipMixin({
       html: true,
       selector: '.tip'
-    })
+    }),
+    ApiMixin
   ],
 
   statics: {
@@ -37,6 +40,19 @@ const AssigneeSelector = React.createClass({
 
         return fullName.indexOf(filter) !== -1;
       });
+    },
+
+    putSessionUserFirst(members) {
+      // If session user is in the filtered list of members, put them at the top
+      let sessionUser = ConfigStore.get('user');
+      let sessionUserIndex = members.findIndex(member => sessionUser && member.id === sessionUser.id);
+
+      if (sessionUserIndex === -1)
+        return members;
+
+      return [members[sessionUserIndex]]
+        .concat(members.slice(0, sessionUserIndex))
+        .concat(members.slice(sessionUserIndex + 1));
     }
   },
 
@@ -78,6 +94,14 @@ const AssigneeSelector = React.createClass({
     // XXX(dcramer): fix odd dedraw issue as of Chrome 45.0.2454.15 dev (64-bit)
     let node = jQuery(ReactDOM.findDOMNode(this.refs.container));
     node.hide().show(0);
+    let oldAssignee = prevState.assignedTo && prevState.assignedTo.id;
+    let newAssignee = this.state.assignedTo && this.state.assignedTo.id;
+    if (oldAssignee !== newAssignee) {
+      this.removeTooltips();
+      if (newAssignee) {
+        this.attachTooltips();
+      }
+    }
   },
 
   onGroupChange(itemIds) {
@@ -92,22 +116,26 @@ const AssigneeSelector = React.createClass({
   },
 
   assignTo(member) {
-    api.assignTo({id: this.props.id, email: member.email});
+    this.api.assignTo({id: this.props.id, member: member});
     this.setState({filter: '', loading: true});
   },
 
   clearAssignTo() {
-    api.assignTo({id: this.props.id, email: ''});
+    this.api.assignTo({id: this.props.id});
     this.setState({filter: '', loading: true});
   },
 
-  onFilterChange(evt) {
-    this.setState({
-      filter: evt.target.value
-    });
+  onFilterKeyUp(evt) {
+    if (evt.key === 'Escape') {
+      this.refs.dropdown.close();
+    } else {
+      this.setState({
+        filter: evt.target.value
+      });
+    }
   },
 
-  onInputKeyDown(evt) {
+  onFilterKeyDown(evt) {
     if (evt.key === 'Enter' && this.state.filter) {
       let members = AssigneeSelector.filterMembers(this.state.memberList, this.state.filter);
       if (members.length > 0) {
@@ -156,17 +184,24 @@ const AssigneeSelector = React.createClass({
     }
 
     let members = AssigneeSelector.filterMembers(this.state.memberList, this.state.filter);
+    members = AssigneeSelector.putSessionUserFirst(members);
+
     let memberNodes = members.map((item) => {
       return (
         <MenuItem key={item.id}
-                  disabled={!loading}
+                  disabled={loading}
                   onSelect={this.assignTo.bind(this, item)} >
-          <Gravatar email={item.email} className="avatar"
-                    size={48} />
+          <Avatar user={item} className="avatar" size={48} />
           {this.highlight(item.name || item.email, this.state.filter)}
         </MenuItem>
       );
     });
+
+    if (memberNodes.length === 0) {
+      memberNodes = [
+        <li className="not-found" key="no-user"><span>{t('No matching users found.')}</span></li>
+      ];
+    }
 
     let tooltipTitle = null;
     if (assignedTo) {
@@ -180,30 +215,32 @@ const AssigneeSelector = React.createClass({
             <LoadingIndicator mini={true} />
           :
             <DropdownLink
+              ref="dropdown"
               className="assignee-selector-toggle"
               onOpen={this.onDropdownOpen}
               onClose={this.onDropdownClose}
               title={assignedTo ?
-                <Gravatar email={assignedTo.email} className="avatar"
-                          size={48} />
+                <Avatar user={assignedTo} className="avatar" size={48} />
                 :
                 <span className="icon-user" />
               }>
               <MenuItem noAnchor={true} key="filter">
                 <input type="text" className="form-control input-sm"
-                       placeholder="Filter people" ref="filter"
-                       onKeyDown={this.onInputKeyDown}
-                       onKeyUp={this.onFilterChange} />
+                       placeholder={t('Filter people')} ref="filter"
+                       onKeyDown={this.onFilterKeyDown}
+                       onKeyUp={this.onFilterKeyUp} />
               </MenuItem>
               {assignedTo ?
                 <MenuItem key="clear"
                           className="clear-assignee"
                           disabled={!loading}
                           onSelect={this.clearAssignTo}>
-                  <span className="icon-circle-cross"/> Clear Assignee
+                  <span className="icon-circle-cross"/> {t('Clear Assignee')}
                 </MenuItem>
               : ''}
-              {memberNodes}
+              <li>
+                <ul>{memberNodes}</ul>
+              </li>
             </DropdownLink>
           }
         </div>

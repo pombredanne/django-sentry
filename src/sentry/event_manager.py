@@ -12,28 +12,31 @@ import math
 import six
 
 from datetime import datetime, timedelta
+from collections import OrderedDict
 from django.conf import settings
-from django.db import IntegrityError, transaction
+from django.db import connection, IntegrityError, router, transaction
+from django.db.models import Q
 from django.utils import timezone
-from django.utils.encoding import force_bytes
+from django.utils.encoding import force_bytes, force_text
 from hashlib import md5
 from uuid import uuid4
 
+from sentry import eventtypes
 from sentry.app import buffer, tsdb
 from sentry.constants import (
     CLIENT_RESERVED_ATTRS, LOG_LEVELS, DEFAULT_LOGGER_NAME, MAX_CULPRIT_LENGTH
 )
-from sentry.interfaces.base import get_interface
+from sentry.interfaces.base import get_interface, iter_interfaces
 from sentry.models import (
-    Activity, Event, EventMapping, EventUser, Group, GroupHash, GroupStatus,
-    Project, Release, TagKey, UserReport
+    Activity, Event, EventMapping, EventUser, Group, GroupHash, GroupResolution,
+    GroupStatus, Project, Release, TagKey, UserReport
 )
 from sentry.plugins import plugins
-from sentry.signals import regression_signal
+from sentry.signals import first_event_received, regression_signal
 from sentry.utils.logging import suppress_exceptions
-from sentry.tasks.index import index_event
 from sentry.tasks.merge import merge_group
 from sentry.tasks.post_process import post_process_group
+from sentry.utils.cache import default_cache
 from sentry.utils.db import get_db_engine
 from sentry.utils.safe import safe_execute, trim, trim_dict
 from sentry.utils.strings import truncatechars
@@ -63,14 +66,35 @@ def md5_from_hash(hash_bits):
     return result.hexdigest()
 
 
+def get_fingerprint_for_event(event):
+    fingerprint = event.data.get('fingerprint')
+    if fingerprint is None:
+        return ['{{ default }}']
+    if isinstance(fingerprint, basestring):
+        return [fingerprint]
+    return fingerprint
+
+
 def get_hashes_for_event(event):
+    return get_hashes_for_event_with_reason(event)[1]
+
+
+def get_hashes_for_event_with_reason(event):
     interfaces = event.get_interfaces()
     for interface in interfaces.itervalues():
         result = interface.compute_hashes(event.platform)
         if not result:
             continue
-        return result
-    return [[event.message]]
+        return (interface.get_path(), result)
+    return ('message', [event.message])
+
+
+def get_grouping_behavior(event):
+    data = event.data
+    if 'checksum' in data:
+        return ('checksum', data['checksum'])
+    fingerprint = get_fingerprint_for_event(event)
+    return ('fingerprint', get_hashes_from_fingerprint_with_reason(event, fingerprint))
 
 
 def get_hashes_from_fingerprint(event, fingerprint):
@@ -93,13 +117,30 @@ def get_hashes_from_fingerprint(event, fingerprint):
     return hashes
 
 
+def get_hashes_from_fingerprint_with_reason(event, fingerprint):
+    default_values = set(['{{ default }}', '{{default}}'])
+    if any(d in fingerprint for d in default_values):
+        default_hashes = get_hashes_for_event_with_reason(event)
+        hash_count = len(default_hashes[1])
+    else:
+        hash_count = 1
+
+    hashes = OrderedDict((bit, []) for bit in fingerprint)
+    for idx in xrange(hash_count):
+        for bit in fingerprint:
+            if bit in default_values:
+                hashes[bit].append(default_hashes)
+            else:
+                hashes[bit] = bit
+    return hashes.items()
+
+
 if not settings.SENTRY_SAMPLE_DATA:
     def should_sample(current_datetime, last_seen, times_seen):
         return False
 else:
     def should_sample(current_datetime, last_seen, times_seen):
-        silence_timedelta = current_datetime - last_seen
-        silence = silence_timedelta.days * 86400 + silence_timedelta.seconds
+        silence = current_datetime - last_seen
 
         if times_seen % count_limit(times_seen) == 0:
             return False
@@ -110,7 +151,7 @@ else:
         return True
 
 
-def generate_culprit(data):
+def generate_culprit(data, platform=None):
     culprit = ''
 
     try:
@@ -130,7 +171,9 @@ def generate_culprit(data):
             culprit = data['sentry.interfaces.Http'].get('url', '')
     else:
         from sentry.interfaces.stacktrace import Stacktrace
-        culprit = Stacktrace.to_python(stacktraces[-1]).get_culprit_string()
+        culprit = Stacktrace.to_python(stacktraces[-1]).get_culprit_string(
+            platform=platform,
+        )
 
     return truncatechars(culprit, MAX_CULPRIT_LENGTH)
 
@@ -173,7 +216,7 @@ class ScoreClause(object):
         return (sql, [])
 
     @classmethod
-    def calculate(self, times_seen, last_seen):
+    def calculate(cls, times_seen, last_seen):
         return math.log(times_seen) * 600 + float(last_seen.strftime('%s'))
 
 
@@ -206,9 +249,10 @@ class EventManager(object):
         if data.get('platform'):
             data['platform'] = trim(data['platform'], 64)
 
+        current_timestamp = timezone.now()
         timestamp = data.get('timestamp')
         if not timestamp:
-            timestamp = timezone.now()
+            timestamp = current_timestamp
 
         if isinstance(timestamp, datetime):
             # We must convert date to local time so Django doesn't mess it up
@@ -221,18 +265,18 @@ class EventManager(object):
             timestamp = float(timestamp.strftime('%s'))
 
         data['timestamp'] = timestamp
+        data['received'] = float(timezone.now().strftime('%s'))
 
         if not data.get('event_id'):
             data['event_id'] = uuid4().hex
 
-        data.setdefault('message', '')
         data.setdefault('culprit', None)
-        data.setdefault('time_spent', None)
         data.setdefault('server_name', None)
         data.setdefault('site', None)
         data.setdefault('checksum', None)
         data.setdefault('fingerprint', None)
         data.setdefault('platform', None)
+        data.setdefault('environment', None)
         data.setdefault('extra', {})
         data.setdefault('errors', [])
 
@@ -282,6 +326,38 @@ class EventManager(object):
             except Exception:
                 pass
 
+        # TODO(dcramer): this logic is duplicated in ``validate_data`` from
+        # coreapi
+
+        # message is coerced to an interface, as its used for pure
+        # index of searchable strings
+        # See GH-3248
+        message = data.pop('message', None)
+        if message:
+            if 'sentry.interfaces.Message' not in data:
+                interface = get_interface('sentry.interfaces.Message')
+                try:
+                    inst = interface.to_python({
+                        'message': message,
+                    })
+                    data[inst.get_path()] = inst.to_json()
+                except Exception:
+                    pass
+            elif not data['sentry.interfaces.Message'].get('formatted'):
+                interface = get_interface('sentry.interfaces.Message')
+                try:
+                    inst = interface.to_python(dict(
+                        data['sentry.interfaces.Message'],
+                        formatted=message,
+                    ))
+                    data[inst.get_path()] = inst.to_json()
+                except Exception:
+                    pass
+
+        # the SDKs currently do not describe event types, and we must infer
+        # them from available attributes
+        data['type'] = eventtypes.infer(data).key
+
         data['version'] = self.version
 
         # TODO(dcramer): find a better place for this logic
@@ -305,31 +381,24 @@ class EventManager(object):
                 data['sentry.interfaces.User'].setdefault(
                     'ip_address', ip_address)
 
-        if data['time_spent']:
-            data['time_spent'] = int(data['time_spent'])
-
         if data['culprit']:
             data['culprit'] = trim(data['culprit'], MAX_CULPRIT_LENGTH)
-
-        if data['message']:
-            data['message'] = trim(
-                data['message'], settings.SENTRY_MAX_MESSAGE_LENGTH)
 
         return data
 
     @suppress_exceptions
     def save(self, project, raw=False):
+        from sentry.tasks.post_process import index_event_tags
+
         project = Project.objects.get_from_cache(id=project)
 
         data = self.data.copy()
 
         # First we pull out our top-level (non-data attr) kwargs
         event_id = data.pop('event_id')
-        message = data.pop('message')
         level = data.pop('level')
 
         culprit = data.pop('culprit', None)
-        time_spent = data.pop('time_spent', None)
         logger_name = data.pop('logger', None)
         server_name = data.pop('server_name', None)
         site = data.pop('site', None)
@@ -337,20 +406,24 @@ class EventManager(object):
         fingerprint = data.pop('fingerprint', None)
         platform = data.pop('platform', None)
         release = data.pop('release', None)
+        environment = data.pop('environment', None)
+
+        # unused
+        time_spent = data.pop('time_spent', None)
+        message = data.pop('message', '')
 
         if not culprit:
-            culprit = generate_culprit(data)
+            culprit = generate_culprit(data, platform=platform)
 
         date = datetime.fromtimestamp(data.pop('timestamp'))
         date = date.replace(tzinfo=timezone.utc)
 
         kwargs = {
-            'message': message,
             'platform': platform,
         }
 
         event = Event(
-            project=project,
+            project_id=project.id,
             event_id=event_id,
             data=data,
             time_spent=time_spent,
@@ -369,6 +442,8 @@ class EventManager(object):
         if release:
             # TODO(dcramer): we should ensure we create Release objects
             tags.append(('sentry:release', release))
+        if environment:
+            tags.append(('environment', environment))
 
         for plugin in plugins.for_project(project, version=None):
             added_tags = safe_execute(plugin.get_tags, event,
@@ -384,7 +459,13 @@ class EventManager(object):
         # this propagates into Event
         data['tags'] = tags
 
-        data['fingerprint'] = fingerprint or '{{ default }}'
+        data['fingerprint'] = fingerprint or ['{{ default }}']
+
+        # Get rid of ephemeral interface data
+        for interface_class, _ in iter_interfaces():
+            interface = interface_class()
+            if interface.ephemeral:
+                data.pop(interface.get_path(), None)
 
         # prioritize fingerprint over checksum as its likely the client defaulted
         # a checksum whereas the fingerprint was explicit
@@ -395,6 +476,41 @@ class EventManager(object):
         else:
             hashes = map(md5_from_hash, get_hashes_for_event(event))
 
+        # TODO(dcramer): temp workaround for complexity
+        data['message'] = message
+        event_type = eventtypes.get(data.get('type', 'default'))(data)
+        event_metadata = event_type.get_metadata()
+        # TODO(dcramer): temp workaround for complexity
+        del data['message']
+
+        data['type'] = event_type.key
+        data['metadata'] = event_metadata
+
+        # index components into ``Event.message``
+        # See GH-3248
+        if event_type.key != 'default':
+            if 'sentry.interfaces.Message' in data and \
+                    data['sentry.interfaces.Message']['message'] != message:
+                message = u'{} {}'.format(
+                    message,
+                    data['sentry.interfaces.Message']['message'],
+                )
+
+        if not message:
+            message = ''
+        elif not isinstance(message, basestring):
+            message = force_text(message)
+
+        for value in event_metadata.itervalues():
+            value_u = force_text(value, errors='replace')
+            if value_u not in message:
+                message = u'{} {}'.format(message, value_u)
+
+        message = trim(message.strip(), settings.SENTRY_MAX_MESSAGE_LENGTH)
+
+        event.message = message
+        kwargs['message'] = message
+
         group_kwargs = kwargs.copy()
         group_kwargs.update({
             'culprit': culprit,
@@ -402,8 +518,13 @@ class EventManager(object):
             'level': level,
             'last_seen': date,
             'first_seen': date,
-            'time_spent_total': time_spent or 0,
-            'time_spent_count': time_spent and 1 or 0,
+            'data': {
+                'last_received': event.data.get('received') or float(event.datetime.strftime('%s')),
+                'type': event_type.key,
+                # we cache the events metadata on the group to ensure its
+                # accessible in the stream
+                'metadata': event_metadata,
+            },
         })
 
         if release:
@@ -415,31 +536,24 @@ class EventManager(object):
 
             group_kwargs['first_release'] = release
 
-            Activity.objects.create(
-                type=Activity.RELEASE,
-                project=project,
-                ident=release,
-                data={'version': release},
-                datetime=date,
-            )
-
         group, is_new, is_regression, is_sample = self._save_aggregate(
             event=event,
             hashes=hashes,
+            release=release,
             **group_kwargs
         )
 
         event.group = group
-        event.group_id = group.id
         # store a reference to the group id to guarantee validation of isolation
         event.data.bind_ref(event)
 
         try:
-            with transaction.atomic():
+            with transaction.atomic(using=router.db_for_write(EventMapping)):
                 EventMapping.objects.create(
                     project=project, group=group, event_id=event_id)
         except IntegrityError:
-            self.logger.info('Duplicate EventMapping found for event_id=%s', event_id)
+            self.logger.info('Duplicate EventMapping found for event_id=%s', event_id,
+                             exc_info=True)
             return event
 
         UserReport.objects.filter(
@@ -449,11 +563,19 @@ class EventManager(object):
         # save the event unless its been sampled
         if not is_sample:
             try:
-                with transaction.atomic():
+                with transaction.atomic(using=router.db_for_write(Event)):
                     event.save()
             except IntegrityError:
-                self.logger.info('Duplicate Event found for event_id=%s', event_id)
+                self.logger.info('Duplicate Event found for event_id=%s', event_id,
+                                 exc_info=True)
                 return event
+
+            index_event_tags.delay(
+                project_id=project.id,
+                group_id=group.id,
+                event_id=event.id,
+                tags=tags,
+            )
 
         if event_user:
             tsdb.record_multi((
@@ -472,6 +594,7 @@ class EventManager(object):
         if not raw:
             if not project.first_event:
                 project.update(first_event=date)
+                first_event_received.send(project=project, group=group, sender=Project)
 
             post_process_group.delay(
                 group=group,
@@ -482,8 +605,6 @@ class EventManager(object):
             )
         else:
             self.logger.info('Raw event passed; skipping post process for event_id=%s', event_id)
-
-        index_event.delay(event)
 
         # TODO: move this to the queue
         if is_regression and not raw:
@@ -507,11 +628,18 @@ class EventManager(object):
         if not euser.tag_value:
             return
 
-        try:
-            with transaction.atomic():
-                euser.save()
-        except IntegrityError:
-            pass
+        cache_key = 'euser:{}:{}'.format(
+            project.id,
+            md5(euser.tag_value.encode('utf-8')).hexdigest(),
+        )
+        cached = default_cache.get(cache_key)
+        if cached is None:
+            try:
+                with transaction.atomic(using=router.db_for_write(EventUser)):
+                    euser.save()
+            except IntegrityError:
+                pass
+            default_cache.set(cache_key, '', 3600)
 
         return euser
 
@@ -538,10 +666,11 @@ class EventManager(object):
             return
 
         for hash in bad_hashes:
-            merge_group.delay(
-                from_group_id=hash.group_id,
-                to_group_id=group.id,
-            )
+            if hash.group_id:
+                merge_group.delay(
+                    from_object_id=hash.group_id,
+                    to_object_id=group.id,
+                )
 
         return GroupHash.objects.filter(
             project=group.project,
@@ -550,7 +679,7 @@ class EventManager(object):
             group=group,
         )
 
-    def _save_aggregate(self, event, hashes, **kwargs):
+    def _save_aggregate(self, event, hashes, release, **kwargs):
         project = event.project
 
         # attempt to find a matching hash
@@ -566,10 +695,13 @@ class EventManager(object):
         # should be better tested/reviewed
         if existing_group_id is None:
             kwargs['score'] = ScoreClause.calculate(1, kwargs['last_seen'])
-            group, group_is_new = Group.objects.create(
-                project=project,
-                **kwargs
-            ), True
+            with transaction.atomic():
+                short_id = project.next_short_id()
+                group, group_is_new = Group.objects.create(
+                    project=project,
+                    short_id=short_id,
+                    **kwargs
+                ), True
         else:
             group = Group.objects.get(id=existing_group_id)
 
@@ -594,10 +726,19 @@ class EventManager(object):
 
         # XXX(dcramer): it's important this gets called **before** the aggregate
         # is processed as otherwise values like last_seen will get mutated
-        can_sample = should_sample(event.datetime, group.last_seen, group.times_seen)
+        can_sample = should_sample(
+            event.data.get('received') or float(event.datetime.strftime('%s')),
+            group.data.get('last_received') or float(group.last_seen.strftime('%s')),
+            group.times_seen,
+        )
 
         if not is_new:
-            is_regression = self._process_existing_aggregate(group, event, kwargs)
+            is_regression = self._process_existing_aggregate(
+                group=group,
+                event=event,
+                data=kwargs,
+                release=release,
+            )
         else:
             is_regression = False
 
@@ -612,13 +753,114 @@ class EventManager(object):
             (tsdb.models.project, project.id),
         ], timestamp=event.datetime)
 
+        tsdb.record_frequency_multi([
+            (tsdb.models.frequent_projects_by_organization, {
+                project.organization_id: {
+                    project.id: 1,
+                },
+            }),
+            (tsdb.models.frequent_issues_by_project, {
+                project.id: {
+                    group.id: 1,
+                },
+            }),
+        ], timestamp=event.datetime)
+
         return group, is_new, is_regression, is_sample
 
-    def _process_existing_aggregate(self, group, event, data):
+    def _handle_regression(self, group, event, release):
+        if not group.is_resolved():
+            return
+
+        elif release:
+            # we only mark it as a regression if the event's release is newer than
+            # the release which we originally marked this as resolved
+            has_resolution = GroupResolution.objects.filter(
+                Q(release__date_added__gt=release.date_added) | Q(release=release),
+                group=group,
+            ).exists()
+            if has_resolution:
+                return
+
+        else:
+            has_resolution = False
+
+        if not plugin_is_regression(group, event):
+            return
+
+        # we now think its a regression, rely on the database to validate that
+        # no one beat us to this
+        date = max(event.datetime, group.last_seen)
+        is_regression = bool(Group.objects.filter(
+            id=group.id,
+            # ensure we cant update things if the status has been set to
+            # muted
+            status__in=[GroupStatus.RESOLVED, GroupStatus.UNRESOLVED],
+        ).exclude(
+            # add to the regression window to account for races here
+            active_at__gte=date - timedelta(seconds=5),
+        ).update(
+            active_at=date,
+            # explicitly set last_seen here as ``is_resolved()`` looks
+            # at the value
+            last_seen=date,
+            status=GroupStatus.UNRESOLVED
+        ))
+
+        group.active_at = date
+        group.status = GroupStatus.UNRESOLVED
+
+        if is_regression and release:
+            # resolutions are only valid if the state of the group is still
+            # resolved -- if it were to change the resolution should get removed
+            try:
+                resolution = GroupResolution.objects.get(
+                    group=group,
+                )
+            except GroupResolution.DoesNotExist:
+                affected = False
+            else:
+                cursor = connection.cursor()
+                # delete() API does not return affected rows
+                cursor.execute("DELETE FROM sentry_groupresolution WHERE id = %s", [resolution.id])
+                affected = cursor.rowcount > 0
+
+            if affected:
+                # if we had to remove the GroupResolution (i.e. we beat the
+                # the queue to handling this) then we need to also record
+                # the corresponding event
+                try:
+                    activity = Activity.objects.filter(
+                        group=group,
+                        type=Activity.SET_RESOLVED_IN_RELEASE,
+                        ident=resolution.id,
+                    ).order_by('-datetime')[0]
+                except IndexError:
+                    # XXX: handle missing data, as its not overly important
+                    pass
+                else:
+                    activity.update(data={
+                        'version': release.version,
+                    })
+
+        if is_regression:
+            Activity.objects.create(
+                project=group.project,
+                group=group,
+                type=Activity.SET_REGRESSION,
+                data={
+                    'version': release.version if release else '',
+                }
+            )
+
+        return is_regression
+
+    def _process_existing_aggregate(self, group, event, data, release):
         date = max(event.datetime, group.last_seen)
         extra = {
             'last_seen': date,
             'score': ScoreClause(group),
+            'data': data['data'],
         }
         if event.message and event.message != group.message:
             extra['message'] = event.message
@@ -627,36 +869,13 @@ class EventManager(object):
         if group.culprit != data['culprit']:
             extra['culprit'] = data['culprit']
 
-        is_regression = False
-        if group.is_resolved() and plugin_is_regression(group, event):
-            is_regression = bool(Group.objects.filter(
-                id=group.id,
-                # ensure we cant update things if the status has been set to
-                # muted
-                status__in=[GroupStatus.RESOLVED, GroupStatus.UNRESOLVED],
-            ).exclude(
-                # add to the regression window to account for races here
-                active_at__gte=date - timedelta(seconds=5),
-            ).update(
-                active_at=date,
-                # explicitly set last_seen here as ``is_resolved()`` looks
-                # at the value
-                last_seen=date,
-                status=GroupStatus.UNRESOLVED
-            ))
-            group.active_at = date
-            group.status = GroupStatus.UNRESOLVED
+        is_regression = self._handle_regression(group, event, release)
 
         group.last_seen = extra['last_seen']
 
         update_kwargs = {
             'times_seen': 1,
         }
-        if event.time_spent:
-            update_kwargs.update({
-                'time_spent_total': event.time_spent,
-                'time_spent_count': 1,
-            })
 
         buffer.incr(Group, update_kwargs, {
             'id': group.id,

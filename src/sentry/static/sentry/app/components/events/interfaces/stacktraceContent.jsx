@@ -1,13 +1,19 @@
 import React from 'react';
 //import GroupEventDataSection from "../eventDataSection";
 import Frame from './frame';
+import OldFrame from './oldFrame';
+import {t} from '../../../locale';
+import OrganizationState from '../../../mixins/organizationState';
+
 
 const StacktraceContent = React.createClass({
   propTypes: {
     data: React.PropTypes.object.isRequired,
     includeSystemFrames: React.PropTypes.bool,
+    platform: React.PropTypes.string,
     newestFirst: React.PropTypes.bool
   },
+  mixins: [OrganizationState],
 
   getDefaultProps() {
     return {
@@ -15,10 +21,31 @@ const StacktraceContent = React.createClass({
     };
   },
 
+  shouldRenderAsTable() {
+    return this.props.platform === 'cocoa';
+  },
+
+  renderOmittedFrames(firstFrameOmitted, lastFrameOmitted) {
+    let props = {
+      className: 'frame frames-omitted',
+      key: 'omitted'
+    };
+    let text = t('Frames %d until %d were omitted and not available.',
+                 firstFrameOmitted, lastFrameOmitted);
+    return <li {...props}>{text}</li>;
+  },
+
+  frameIsVisible(frame, nextFrame) {
+    return (
+      this.props.includeSystemFrames ||
+      frame.inApp ||
+      (nextFrame && nextFrame.inApp)
+    );
+  },
+
   render() {
     let data = this.props.data;
     let firstFrameOmitted, lastFrameOmitted;
-    let includeSystemFrames = this.props.includeSystemFrames;
 
     if (data.framesOmitted) {
       firstFrameOmitted = data.framesOmitted[0];
@@ -28,17 +55,39 @@ const StacktraceContent = React.createClass({
       lastFrameOmitted = null;
     }
 
+    let lastFrameIdx = null;
+    data.frames.forEach((frame, frameIdx) => {
+      if (frame.inApp) lastFrameIdx = frameIdx;
+    });
+    if (lastFrameIdx === null) {
+      lastFrameIdx = data.frames.length - 1;
+    }
+
+    // use old frames if we do not have an org (share view) or
+    // we don't have the feature
+    let oldFrames = !this.context.organization || !this.getFeatures().has('new-tracebacks');
+    let FrameComponent = Frame;
+    if (oldFrames) {
+      FrameComponent = OldFrame;
+    }
+
     let frames = [];
     data.frames.forEach((frame, frameIdx) => {
-      if (includeSystemFrames || frame.inApp) {
-        frames.push(<Frame key={frameIdx} data={frame} />);
+      let nextFrame = data.frames[frameIdx + 1];
+      if (this.frameIsVisible(frame, nextFrame)) {
+        frames.push(
+          <FrameComponent
+            key={frameIdx}
+            data={frame}
+            isExpanded={lastFrameIdx === frameIdx}
+            emptySourceNotation={lastFrameIdx === frameIdx && frameIdx === 0}
+            nextFrameInApp={nextFrame && nextFrame.inApp}
+            platform={this.props.platform} />
+        );
       }
       if (frameIdx === firstFrameOmitted) {
-        frames.push((
-          <li className="frame frames-omitted" key="omitted">
-            Frames {firstFrameOmitted} until {lastFrameOmitted} were omitted and not available.
-          </li>
-        ));
+        frames.push(this.renderOmittedFrames(
+          firstFrameOmitted, lastFrameOmitted));
       }
     });
 
@@ -46,11 +95,12 @@ const StacktraceContent = React.createClass({
       frames.reverse();
     }
 
+    let className = this.props.className || '';
+    className += (oldFrames ? ' old-traceback' : ' traceback');
+
     return (
-      <div className="traceback">
-        <ul>
-          {frames}
-        </ul>
+      <div className={className}>
+        <ul>{frames}</ul>
       </div>
     );
   }

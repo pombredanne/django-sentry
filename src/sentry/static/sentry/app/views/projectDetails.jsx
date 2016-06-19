@@ -1,6 +1,7 @@
 import React from 'react';
 import Reflux from 'reflux';
-import api from '../api';
+
+import ApiMixin from '../mixins/apiMixin';
 import DocumentTitle from 'react-document-title';
 import MemberListStore from '../stores/memberListStore';
 import LoadingError from '../components/loadingError';
@@ -10,6 +11,8 @@ import ProjectHeader from '../components/projectHeader';
 import OrganizationState from '../mixins/organizationState';
 import PropTypes from '../proptypes';
 import TeamStore from '../stores/teamStore';
+import ProjectStore from '../stores/projectStore';
+import {t} from '../locale';
 
 const ERROR_TYPES = {
   MISSING_MEMBERSHIP: 'MISSING_MEMBERSHIP',
@@ -23,8 +26,10 @@ const ProjectDetails = React.createClass({
   },
 
   mixins: [
+    ApiMixin,
     Reflux.connect(MemberListStore, 'memberList'),
     Reflux.listenTo(TeamStore, 'onTeamChange'),
+    Reflux.listenTo(ProjectStore, 'onProjectChange'),
     OrganizationState
   ],
 
@@ -52,22 +57,41 @@ const ProjectDetails = React.createClass({
   },
 
   componentWillReceiveProps(nextProps) {
-    if (nextProps.params.projectId !== this.props.params.projectId ||
-      nextProps.params.orgId != this.props.params.orgId) {
+    if (nextProps.params.projectId !== this.props.params.projectId) {
       this.remountComponent();
     }
   },
 
-  remountComponent() {
-    this.setState(this.getInitialState(), this.fetchData);
+  componentDidUpdate(prevProps, prevState) {
+    if (prevProps.params.projectId !== this.props.params.projectId) {
+      this.fetchData();
+    }
   },
 
-  onTeamChange() {
-    this.fetchData();
+  remountComponent() {
+    this.setState(this.getInitialState());
+  },
+
+  onTeamChange(itemIds) {
+    if (!this.state.team) return;
+    if (!itemIds.has(this.state.team.id)) return;
+
+    this.setState({
+      team: {...TeamStore.getById(this.state.team.id)}
+    });
+  },
+
+  onProjectChange(projectIds) {
+    if (!this.state.project) return;
+    if (!projectIds.has(this.state.project.id)) return;
+
+    this.setState({
+      project: {...ProjectStore.getById(this.state.project.id)}
+    });
   },
 
   identifyProject() {
-    let params = this.props.params;
+    let {params} = this.props;
     let projectSlug = params.projectId;
     let activeProject = null;
     let activeTeam = null;
@@ -89,35 +113,35 @@ const ProjectDetails = React.createClass({
       return;
     }
     let [activeTeam, activeProject] = this.identifyProject();
-    let isMember = activeTeam && activeTeam.isMember;
+    let hasAccess = activeTeam && activeTeam.hasAccess;
 
-    if (activeProject && isMember) {
+    this.setState({
+      loading: true,
+      project: activeProject,
+      team: activeTeam
+    });
+
+    if (activeProject && hasAccess) {
       // TODO(dcramer): move member list to organization level
-      api.request(this.getMemberListEndpoint(), {
+      this.api.request(this.getMemberListEndpoint(), {
         success: (data) => {
-          MemberListStore.loadInitialData(data);
+          MemberListStore.loadInitialData(data.filter((m) => m.user).map((m) => m.user));
         }
       });
 
       this.setState({
-        project: activeProject,
-        team: activeTeam,
         loading: false,
         error: false,
         errorType: null
       });
-    } else if (isMember === false) {
+    } else if (activeTeam && activeTeam.isMember) {
       this.setState({
-        project: activeProject,
-        team: activeTeam,
         loading: false,
         error: true,
         errorType: ERROR_TYPES.MISSING_MEMBERSHIP
       });
     } else {
       this.setState({
-        project: activeProject,
-        team: activeTeam,
         loading: false,
         error: true,
         errorType: ERROR_TYPES.PROJECT_NOT_FOUND
@@ -150,7 +174,9 @@ const ProjectDetails = React.createClass({
         case ERROR_TYPES.PROJECT_NOT_FOUND:
           return (
             <div className="container">
-              <div className="alert alert-block">The project you were looking for was not found.</div>
+              <div className="alert alert-block">
+                {t('The project you were looking for was not found.')}
+              </div>
             </div>
           );
         case ERROR_TYPES.MISSING_MEMBERSHIP:

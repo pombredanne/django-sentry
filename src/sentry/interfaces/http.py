@@ -10,16 +10,26 @@ from __future__ import absolute_import
 
 __all__ = ('Http',)
 
+import re
 from django.conf import settings
 from django.utils.translation import ugettext as _
 from urllib import urlencode
 from urlparse import parse_qsl, urlsplit, urlunsplit
 
-from sentry.constants import HTTP_METHODS
 from sentry.interfaces.base import Interface, InterfaceValidationError
 from sentry.utils import json
 from sentry.utils.safe import trim, trim_dict, trim_pairs
 from sentry.web.helpers import render_to_string
+
+# Instead of relying on a list of hardcoded methods, just loosly match
+# against a pattern.
+http_method_re = re.compile(r'^[A-Z\-_]{3,32}$')
+
+
+def to_bytes(value):
+    if isinstance(value, unicode):
+        return value.encode('utf-8')
+    return str(value)
 
 
 def format_headers(value):
@@ -42,6 +52,8 @@ def format_headers(value):
         if k.lower() == 'cookie':
             cookie_header = v
         else:
+            if not isinstance(v, basestring):
+                v = unicode(v)
             result.append((k.title(), v))
     return result, cookie_header
 
@@ -57,9 +69,21 @@ def format_cookies(value):
         value = value.items()
 
     return [
-        (k.encode('utf8').strip(), v)
+        map(fix_broken_encoding, (k.strip(), v))
         for k, v in value
     ]
+
+
+def fix_broken_encoding(value):
+    """
+    Strips broken characters that can't be represented at all
+    in utf8. This prevents our parsers from breaking elsewhere.
+    """
+    if isinstance(value, unicode):
+        value = value.encode('utf8', errors='replace')
+    if isinstance(value, str):
+        value = value.decode('utf8', errors='replace')
+    return value
 
 
 class Http(Interface):
@@ -106,7 +130,9 @@ class Http(Interface):
 
         if data.get('method'):
             method = data['method'].upper()
-            if method not in HTTP_METHODS:
+            # Optimize for the common path here, where it's a GET/POST, falling
+            # back to a regular expresion test
+            if method not in ('GET', 'POST') and not http_method_re.match(method):
                 raise InterfaceValidationError("Invalid value for 'method'")
             kwargs['method'] = method
         else:
@@ -118,7 +144,8 @@ class Http(Interface):
         if query_string:
             # if querystring was a dict, convert it to a string
             if isinstance(query_string, dict):
-                query_string = urlencode(query_string.items())
+                query_string = urlencode([(to_bytes(k), to_bytes(v))
+                                          for k, v in query_string.items()])
             else:
                 query_string = query_string
                 if query_string[0] == '?':
@@ -151,7 +178,7 @@ class Http(Interface):
         kwargs['cookies'] = trim_pairs(format_cookies(cookies))
         kwargs['env'] = trim_dict(data.get('env') or {})
         kwargs['headers'] = trim_pairs(headers)
-        kwargs['data'] = body
+        kwargs['data'] = fix_broken_encoding(body)
         kwargs['url'] = urlunsplit((scheme, netloc, path, '', ''))
         kwargs['fragment'] = trim(fragment, 1024)
 
@@ -186,6 +213,9 @@ class Http(Interface):
         return _('Request')
 
     def get_api_context(self, is_public=False):
+        if is_public:
+            return {}
+
         data = self.data
         if isinstance(data, dict):
             data = json.dumps(data)
@@ -205,10 +235,7 @@ class Http(Interface):
             'fragment': self.fragment,
             'data': data,
             'headers': headers,
+            'cookies': cookies,
+            'env': self.env or None,
         }
-        if not is_public:
-            data.update({
-                'cookies': cookies,
-                'env': self.env or None,
-            })
         return data

@@ -12,6 +12,7 @@ from __future__ import absolute_import, print_function
 
 import base64
 import logging
+import re
 import six
 import uuid
 import zlib
@@ -26,18 +27,20 @@ from sentry.app import env
 from sentry.cache import default_cache
 from sentry.constants import (
     CLIENT_RESERVED_ATTRS, DEFAULT_LOG_LEVEL, LOG_LEVELS, MAX_TAG_VALUE_LENGTH,
-    MAX_TAG_KEY_LENGTH
+    MAX_TAG_KEY_LENGTH, VALID_PLATFORMS
 )
 from sentry.interfaces.base import get_interface, InterfaceValidationError
 from sentry.interfaces.csp import Csp
-from sentry.models import EventError, Project, ProjectKey, TagKey
+from sentry.models import EventError, Project, ProjectKey, TagKey, TagValue
 from sentry.tasks.store import preprocess_event
-from sentry.utils import is_float, json
+from sentry.utils import json
 from sentry.utils.auth import parse_auth_header
 from sentry.utils.compat import StringIO
 from sentry.utils.strings import decompress
+from sentry.utils.validators import is_float
 
 LOG_LEVEL_REVERSE_MAP = dict((v, k) for k, v in LOG_LEVELS.iteritems())
+EVENT_ID_RE = re.compile(r'^[a-fA-F0-9]{32}$')
 
 
 class APIError(Exception):
@@ -173,16 +176,16 @@ class ClientApiHelper(object):
         self.log = ClientLogHelper(self.context)
 
     def auth_from_request(self, request):
-        if request.META.get('HTTP_X_SENTRY_AUTH', '').startswith('Sentry'):
+        if request.META.get('HTTP_X_SENTRY_AUTH', '')[:7].lower() == 'sentry ':
             result = parse_auth_header(request.META['HTTP_X_SENTRY_AUTH'])
-        elif request.META.get('HTTP_AUTHORIZATION', '').startswith('Sentry'):
+        elif request.META.get('HTTP_AUTHORIZATION', '')[:7].lower() == 'sentry ':
             result = parse_auth_header(request.META['HTTP_AUTHORIZATION'])
         else:
-            result = dict(
-                (k, request.GET[k])
+            result = {
+                k: request.GET[k]
                 for k in request.GET.iterkeys()
-                if k.startswith('sentry_')
-            )
+                if k[:7] == 'sentry_'
+            }
         if not result:
             raise APIUnauthorized('Unable to find authentication information')
 
@@ -264,6 +267,7 @@ class ClientApiHelper(object):
     def safely_load_json_string(self, json_string):
         try:
             obj = json.loads(json_string)
+            assert isinstance(obj, dict)
         except Exception as e:
             # This error should be caught as it suggests that there's a
             # bug somewhere in the client's code.
@@ -326,16 +330,26 @@ class ClientApiHelper(object):
             result.append(unicode(bit))
         return result
 
+    def parse_client_as_sdk(self, value):
+        if not value:
+            return
+        try:
+            name, version = value.split('/', 1)
+        except ValueError:
+            try:
+                name, version = value.split(' ', 1)
+            except ValueError:
+                return
+        return {
+            'name': name,
+            'version': version,
+        }
+
     def validate_data(self, project, data):
         # TODO(dcramer): move project out of the data packet
         data['project'] = project.id
 
         data['errors'] = []
-
-        if not data.get('message'):
-            data['message'] = '<no message value>'
-        elif not isinstance(data['message'], six.string_types):
-            raise APIForbidden('Invalid value for message')
 
         if data.get('culprit'):
             if not isinstance(data['culprit'], six.string_types):
@@ -352,6 +366,16 @@ class ClientApiHelper(object):
                 len(data['event_id']))
             data['errors'].append({
                 'type': EventError.VALUE_TOO_LONG,
+                'name': 'event_id',
+                'value': data['event_id'],
+            })
+            data['event_id'] = uuid.uuid4().hex
+        elif not EVENT_ID_RE.match(data['event_id']):
+            self.log.info(
+                'Discarded invalid value for event_id: %r',
+                data['event_id'], exc_info=True)
+            data['errors'].append({
+                'type': EventError.INVALID_DATA,
                 'name': 'event_id',
                 'value': data['event_id'],
             })
@@ -383,6 +407,10 @@ class ClientApiHelper(object):
                     'name': 'fingerprint',
                     'value': data['fingerprint'],
                 })
+                del data['fingerprint']
+
+        if 'platform' not in data or data['platform'] not in VALID_PLATFORMS:
+            data['platform'] = 'other'
 
         if data.get('modules') and type(data['modules']) != dict:
             self.log.info(
@@ -471,8 +499,26 @@ class ClientApiHelper(object):
                 # support tags with spaces by converting them
                 k = k.replace(' ', '-')
 
+                if TagKey.is_reserved_key(k):
+                    self.log.info('Discarding reserved tag key: %s', k)
+                    data['errors'].append({
+                        'type': EventError.INVALID_DATA,
+                        'name': 'tags',
+                        'value': pair,
+                    })
+                    continue
+
                 if not TagKey.is_valid_key(k):
                     self.log.info('Discarded invalid tag key: %s', k)
+                    data['errors'].append({
+                        'type': EventError.INVALID_DATA,
+                        'name': 'tags',
+                        'value': pair,
+                    })
+                    continue
+
+                if not TagValue.is_valid_value(v):
+                    self.log.info('Discard invalid tag value: %s', v)
                     data['errors'].append({
                         'type': EventError.INVALID_DATA,
                         'name': 'tags',
@@ -504,8 +550,9 @@ class ClientApiHelper(object):
                 continue
 
             if type(value) != dict:
-                # HACK(dcramer): the exception interface supports a list as the
-                # value. We should change this in a new protocol version.
+                # HACK(dcramer): the exception/breadcrumbs interface supports a
+                # list as the value. We should change this in a new protocol
+                # version.
                 if type(value) in (list, tuple):
                     value = {'values': value}
                 else:
@@ -533,6 +580,43 @@ class ClientApiHelper(object):
                     'name': k,
                     'value': value,
                 })
+
+        # TODO(dcramer): ideally this logic would happen in normalize, but today
+        # we don't do "validation" there (create errors)
+
+        # message is coerced to an interface, as its used for pure
+        # index of searchable strings
+        # See GH-3248
+        message = data.pop('message', None)
+        if message:
+            if 'sentry.interfaces.Message' not in data:
+                value = {
+                    'message': message,
+                }
+            elif not data['sentry.interfaces.Message'].get('formatted'):
+                value = data['sentry.interfaces.Message']
+                value['formatted'] = message
+            else:
+                value = None
+
+            if value is not None:
+                k = 'sentry.interfaces.Message'
+                interface = get_interface(k)
+                try:
+                    inst = interface.to_python(value)
+                    data[inst.get_path()] = inst.to_json()
+                except Exception as e:
+                    if isinstance(e, InterfaceValidationError):
+                        log = self.log.info
+                    else:
+                        log = self.log.error
+                    log('Discarded invalid value for interface: %s (%r)', k, value,
+                        exc_info=True)
+                    data['errors'].append({
+                        'type': EventError.INVALID_DATA,
+                        'name': k,
+                        'value': value,
+                    })
 
         level = data.get('level') or DEFAULT_LOG_LEVEL
         if isinstance(level, six.string_types) and not level.isdigit():
@@ -570,14 +654,23 @@ class ClientApiHelper(object):
         if 'sentry.interfaces.User' in data:
             data['sentry.interfaces.User'].pop('ip_address', None)
 
-    def ensure_has_ip(self, data, ip_address):
-        if data.get('sentry.interfaces.Http', {}).get('env', {}).get('REMOTE_ADDR'):
-            return
+    def ensure_has_ip(self, data, ip_address, set_if_missing=True):
+        got_ip = False
+        ip = data.get('sentry.interfaces.Http', {}) \
+            .get('env', {}).get('REMOTE_ADDR')
+        if ip:
+            if ip == '{{auto}}':
+                data['sentry.interfaces.Http']['env']['REMOTE_ADDR'] = ip_address
+            got_ip = True
 
-        if data.get('sentry.interfaces.User', {}).get('ip_address'):
-            return
+        ip = data.get('sentry.interfaces.User', {}).get('ip_address')
+        if ip:
+            if ip == '{{auto}}':
+                data['sentry.interfaces.User']['ip_address'] = ip_address
+            got_ip = True
 
-        data.setdefault('sentry.interfaces.User', {})['ip_address'] = ip_address
+        if not got_ip and set_if_missing:
+            data.setdefault('sentry.interfaces.User', {})['ip_address'] = ip_address
 
     def insert_data_to_database(self, data):
         cache_key = 'e:{1}:{0}'.format(data['project'], data['event_id'])
@@ -589,6 +682,17 @@ class CspApiHelper(ClientApiHelper):
     def origin_from_request(self, request):
         # We don't use an origin here
         return None
+
+    def auth_from_request(self, request):
+        key = request.GET.get('sentry_key')
+        if not key:
+            raise APIUnauthorized('Unable to find authentication information')
+
+        auth = Auth({
+            'sentry_key': key,
+        }, is_public=True)
+        auth.client = request.META.get('HTTP_USER_AGENT')
+        return auth
 
     def validate_data(self, project, data):
         # All keys are sent with hyphens, so we want to conver to underscores

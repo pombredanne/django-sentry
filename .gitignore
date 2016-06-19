@@ -1,5 +1,4 @@
 .coverage
-.tox
 .DS_Store
 *.egg-info
 *.pyc
@@ -26,4 +25,6 @@ example/db.sqlite
 /src/sentry/static/sentry/admin/
 /src/sentry/static/sentry/debug_toolbar/
 /src/sentry/static/sentry/rest_framework/
+/src/sentry/integration-docs
 /wheelhouse
+/test_cli/

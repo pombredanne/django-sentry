@@ -5,7 +5,7 @@ import operator
 from django.db.models import Q
 
 from sentry.api.serializers import Serializer, register
-from sentry.models import EventUser, GroupTagValue, TagValue
+from sentry.models import EventUser, GroupTagValue, TagKey, TagValue
 
 
 def parse_user_tag(value):
@@ -14,6 +14,8 @@ def parse_user_tag(value):
         lookup = 'ident'
     elif lookup == 'ip':
         lookup = 'ip_address'
+    elif lookup not in ('email', 'ip_address', 'username'):
+        raise ValueError('{} is not a valid user attribute'.format(lookup))
     return {lookup: value}
 
 
@@ -22,11 +24,16 @@ class GroupTagValueSerializer(Serializer):
     def get_attrs(self, item_list, user):
         project = item_list[0].project
 
-        user_lookups = [
-            Q(**parse_user_tag(i.value))
-            for i in item_list
-            if i.key == 'sentry:user'
-        ]
+        user_lookups = []
+        for item in item_list:
+            if item.key != 'sentry:user':
+                continue
+            if ':' not in item.value:
+                continue
+            try:
+                user_lookups.append(Q(**parse_user_tag(item.value)))
+            except ValueError:
+                continue
 
         tag_labels = {}
         if user_lookups:
@@ -64,14 +71,10 @@ class GroupTagValueSerializer(Serializer):
         return result
 
     def serialize(self, obj, attrs, user):
-        if obj.key.startswith('sentry:'):
-            key = obj.key.split('sentry:', 1)[-1]
-        else:
-            key = obj.key
-
         return {
+            'id': str(obj.id),
             'name': attrs['name'],
-            'key': key,
+            'key': TagKey.get_standardized_key(obj.key),
             'value': obj.value,
             'count': obj.times_seen,
             'lastSeen': obj.last_seen,

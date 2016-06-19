@@ -19,11 +19,25 @@
 
         {{ form|as_crispy_errors }}
 
-        <fieldset>
-          {% for field in form %}
-            {{ field|as_crispy_field }}
-          {% endfor %}
-        </fieldset>
+        <legend style="margin-top: 0">General</legend>
+
+        {{ form.name|as_crispy_field }}
+        {{ form.slug|as_crispy_field }}
+        {{ form.early_adopter|as_crispy_field }}
+
+        <legend>Membership</legend>
+
+        {{ form.default_role|as_crispy_field }}
+        {{ form.allow_joinleave|as_crispy_field }}
+
+        <legend>Security &amp; Privacy</legend>
+
+        {{ form.allow_shared_issues|as_crispy_field }}
+        {{ form.enhanced_privacy|as_crispy_field }}
+        {{ form.require_scrub_data|as_crispy_field }}
+        {{ form.require_scrub_defaults|as_crispy_field }}
+        {{ form.sensitive_fields|as_crispy_field }}
+        {{ form.require_scrub_ip_address|as_crispy_field }}
 
         <fieldset class="form-actions">
           <button type="submit" class="btn btn-primary btn-lg">{% trans "Save Changes" %}</button>

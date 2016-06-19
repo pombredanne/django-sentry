@@ -3,6 +3,7 @@ from __future__ import absolute_import
 from sentry.api.base import DocSection
 from sentry.api.bases.group import GroupEndpoint
 from sentry.api.exceptions import ResourceDoesNotExist
+from sentry.api.paginator import DateTimePaginator, OffsetPaginator, Paginator
 from sentry.api.serializers import serialize
 from sentry.models import GroupTagValue, TagKey, TagKeyStatus, Group
 from sentry.utils.apidocs import scenario
@@ -13,7 +14,7 @@ def list_tag_values_scenario(runner):
     group = Group.objects.filter(project=runner.default_project).first()
     runner.request(
         method='GET',
-        path='/groups/%s/tags/%s/values/' % (
+        path='/issues/%s/tags/%s/values/' % (
             group.id, 'browser'),
     )
 
@@ -28,14 +29,14 @@ class GroupTagKeyValuesEndpoint(GroupEndpoint):
         List a Tag's Values
         ```````````````````
 
-        Return a list of values associated with this key.
+        Return a list of values associated with this key for an issue.
 
-        :pparam string group_id: the ID of the group to retrieve.
+        :pparam string issue_id: the ID of the issue to retrieve.
         :pparam string key: the tag key to look the values up for.
         :auth: required
         """
         # XXX(dcramer): kill sentry prefix for internal reserved tags
-        if key in ('release', 'user', 'filename', 'function'):
+        if TagKey.is_reserved_key(key):
             lookup_key = 'sentry:{0}'.format(key)
         else:
             lookup_key = key
@@ -53,9 +54,24 @@ class GroupTagKeyValuesEndpoint(GroupEndpoint):
             key=lookup_key,
         )
 
+        sort = request.GET.get('sort')
+        if sort == 'date':
+            order_by = '-last_seen'
+            paginator_cls = DateTimePaginator
+        elif sort == 'age':
+            order_by = '-first_seen'
+            paginator_cls = DateTimePaginator
+        elif sort == 'freq':
+            order_by = '-times_seen'
+            paginator_cls = OffsetPaginator
+        else:
+            order_by = '-id'
+            paginator_cls = Paginator
+
         return self.paginate(
             request=request,
             queryset=queryset,
-            order_by='-id',
+            order_by=order_by,
+            paginator_cls=paginator_cls,
             on_results=lambda x: serialize(x, request.user),
         )
