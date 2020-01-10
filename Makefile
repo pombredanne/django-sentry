@@ -1,61 +1,111 @@
-NPM_ROOT = ./node_modules
 STATIC_DIR = src/sentry/static/sentry
 
-install-python:
-	@echo "--> Installing Python dependencies"
-	pip install "setuptools>=0.9.8"
-	# order matters here, base package must install first
-	pip install -e .
-	pip install "file://`pwd`#egg=sentry[dev,dsym]"
+ifneq "$(wildcard /usr/local/opt/libxmlsec1/lib)" ""
+	LDFLAGS += -L/usr/local/opt/libxmlsec1/lib
+endif
+ifneq "$(wildcard /usr/local/opt/openssl/lib)" ""
+	LDFLAGS += -L/usr/local/opt/openssl/lib
+endif
 
-install-npm:
-	@echo "--> Installing Node dependencies"
-	npm install
+PIP := LDFLAGS="$(LDFLAGS)" python -m pip
+# Note: this has to be synced with the pip version in .travis.yml.
+PIP_VERSION := 19.2.3
+PIP_OPTS := --disable-pip-version-check
+WEBPACK := NODE_ENV=production ./bin/yarn webpack
+YARN := ./bin/yarn
 
-install-python-tests:
-	pip install "file://`pwd`#egg=sentry[dev,tests,dsym]"
+DROPDB := $(shell command -v dropdb 2> /dev/null)
+ifndef DROPDB
+	DROPDB = docker exec sentry_postgres dropdb
+endif
+CREATEDB := $(shell command -v createdb 2> /dev/null)
+ifndef CREATEDB
+	CREATEDB = docker exec sentry_postgres createdb
+endif
 
-develop-only: update-submodules install-python install-python-tests install-npm
+bootstrap: develop init-config run-dependent-services create-db apply-migrations
 
-develop: update-submodules setup-git develop-only install-python-tests
-	@echo ""
+develop: ensure-venv setup-git develop-only
 
-dev-postgres: install-python
+develop-only: ensure-venv update-submodules install-yarn-pkgs install-sentry-dev
 
-dev-docs:
-	pip install -r doc-requirements.txt
+init-config:
+	sentry init --dev
 
-reset-db:
-	@echo "--> Dropping existing 'sentry' database"
-	dropdb sentry || true
-	@echo "--> Creating 'sentry' database"
-	createdb -E utf-8 sentry
-	@echo "--> Applying migrations"
-	sentry upgrade
+run-dependent-services:
+	sentry devservices up
 
-setup-git:
-	@echo "--> Installing git hooks"
-	git config branch.autosetuprebase always
-	git config commit.template config/commit-template
-	cd .git/hooks && ln -sf ../../config/hooks/* ./
-	@echo ""
+test: develop lint test-js test-python test-cli
 
 build: locale
 
+drop-db:
+	@echo "--> Dropping existing 'sentry' database"
+	$(DROPDB) -h 127.0.0.1 -U postgres sentry || true
+
+create-db:
+	@echo "--> Creating 'sentry' database"
+	$(CREATEDB) -h 127.0.0.1 -U postgres -E utf-8 sentry || true
+
+apply-migrations:
+	@echo "--> Applying migrations"
+	sentry upgrade
+
+reset-db: drop-db create-db apply-migrations
+
 clean:
 	@echo "--> Cleaning static cache"
-	rm -f dist/* static/dist/*
+	rm -rf dist/* static/dist/*
 	@echo "--> Cleaning integration docs cache"
 	rm -rf src/sentry/integration-docs
 	@echo "--> Cleaning pyc files"
 	find . -name "*.pyc" -delete
 	@echo "--> Cleaning python build artifacts"
-	rm -rf build/ dist/ sentry-package.json
+	rm -rf build/ dist/ src/sentry/assets.json
 	@echo ""
 
-build-js-po:
+ensure-venv:
+	@./scripts/ensure-venv.sh
+
+ensure-latest-pip:
+	$(PIP) install "pip==$(PIP_VERSION)"
+
+setup-git: ensure-latest-pip
+	@echo "--> Installing git hooks"
+	git config branch.autosetuprebase always
+	git config core.ignorecase false
+	cd .git/hooks && ln -sf ../../config/hooks/* ./
+	$(PIP) install "pre-commit==1.18.2" $(PIP_OPTS)
+	pre-commit install --install-hooks
+	@echo ""
+
+update-submodules:
+	@echo "--> Updating git submodules"
+	git submodule init
+	git submodule update
+	@echo ""
+
+node-version-check:
+	@test "$$(node -v)" = v"$$(cat .nvmrc)" || (echo 'node version does not match .nvmrc. Recommended to use https://github.com/creationix/nvm'; exit 1)
+
+install-yarn-pkgs:
+	@echo "--> Installing Yarn packages (for development)"
+	@command -v $(YARN) 2>&1 > /dev/null || (echo 'yarn not found. Please install it before proceeding.'; exit 1)
+	# Use NODE_ENV=development so that yarn installs both dependencies + devDependencies
+	NODE_ENV=development $(YARN) install --pure-lockfile
+	# A common problem is with node packages not existing in `node_modules` even though `yarn install`
+	# says everything is up to date. Even though `yarn install` is run already, it doesn't take into
+	# account the state of the current filesystem (it only checks .yarn-integrity).
+	# Add an additional check against `node_modules`
+	$(YARN) check --verify-tree || $(YARN) install --check-files
+
+install-sentry-dev:
+	@echo "--> Installing Sentry (for development)"
+	$(PIP) install -e ".[dev]" $(PIP_OPTS)
+
+build-js-po: node-version-check
 	mkdir -p build
-	SENTRY_EXTRACT_TRANSLATIONS=1 ./node_modules/.bin/webpack
+	SENTRY_EXTRACT_TRANSLATIONS=1 $(WEBPACK)
 
 locale: build-js-po
 	cd src/sentry && sentry django makemessages -i static -l en
@@ -64,7 +114,7 @@ locale: build-js-po
 	cd src/sentry && sentry django compilemessages
 
 update-transifex: build-js-po
-	pip install transifex-client
+	$(PIP) install transifex-client $(PIP_OPTS)
 	cd src/sentry && sentry django makemessages -i static -l en
 	./bin/merge-catalogs en
 	tx push -s
@@ -72,17 +122,13 @@ update-transifex: build-js-po
 	./bin/find-good-catalogs src/sentry/locale/catalogs.json
 	cd src/sentry && sentry django compilemessages
 
-update-submodules:
-	@echo "--> Updating git submodules"
-	git submodule init
-	git submodule update
-	@echo ""
+build-platform-assets:
+	@echo "--> Building platform assets"
+	@echo "from sentry.utils.integrationdocs import sync_docs; sync_docs(quiet=True)" | sentry exec
 
-test: develop lint test-js test-python test-cli
-
-testloop: develop
-	pip install pytest-xdist
-	py.test tests -f
+fetch-release-registry:
+	@echo "--> Fetching release registry"
+	@echo "from sentry.utils.distutils import sync_registry; sync_registry()" | sentry exec
 
 test-cli:
 	@echo "--> Testing CLI"
@@ -94,104 +140,132 @@ test-cli:
 	rm -r test_cli
 	@echo ""
 
-test-js:
+test-js: node-version-check
+	@echo "--> Building static assets"
+	@$(WEBPACK) --profile --json > .artifacts/webpack-stats.json
 	@echo "--> Running JavaScript tests"
-	@${NPM_ROOT}/.bin/webpack
-	@npm run test
+	@$(YARN) run test-ci
+	@echo ""
+
+# builds and creates percy snapshots
+test-styleguide:
+	@echo "--> Building and snapshotting styleguide"
+	@$(YARN) run snapshot
 	@echo ""
 
 test-python:
+	sentry init
+	make build-platform-assets
 	@echo "--> Running Python tests"
-	py.test tests/integration tests/sentry || exit 1
+ifndef TEST_GROUP
+	py.test tests/integration tests/sentry --cov . --cov-report="xml:.artifacts/python.coverage.xml" --junit-xml=".artifacts/python.junit.xml" || exit 1
+else
+	py.test tests/integration tests/sentry -m group_$(TEST_GROUP) --cov . --cov-report="xml:.artifacts/python.coverage.xml" --junit-xml=".artifacts/python.junit.xml" || exit 1
+endif
 	@echo ""
 
-test-acceptance:
+test-snuba:
+	@echo "--> Running snuba tests"
+	py.test tests/snuba tests/sentry/eventstream/kafka -vv --cov . --cov-report="xml:.artifacts/snuba.coverage.xml" --junit-xml=".artifacts/snuba.junit.xml"
+	@echo ""
+
+test-symbolicator:
+	@echo "--> Running symbolicator tests"
+	py.test tests/symbolicator -vv --cov . --cov-report="xml:.artifacts/symbolicator.coverage.xml" --junit-xml=".artifacts/symbolicator.junit.xml"
+	@echo ""
+
+test-acceptance: node-version-check
+	sentry init
+	@echo "--> Building static assets"
+	@$(WEBPACK) --display errors-only
 	@echo "--> Running acceptance tests"
-	py.test tests/acceptance || exit 1
+ifndef TEST_GROUP
+	py.test tests/acceptance --cov . --cov-report="xml:.artifacts/acceptance.coverage.xml" --junit-xml=".artifacts/acceptance.junit.xml" --html=".artifacts/acceptance.pytest.html" --self-contained-html
+else
+	py.test tests/acceptance -m group_$(TEST_GROUP) --cov . --cov-report="xml:.artifacts/acceptance.coverage.xml" --junit-xml=".artifacts/acceptance.junit.xml" --html=".artifacts/acceptance.pytest.html" --self-contained-html
+endif
+
 	@echo ""
 
-
-test-python-coverage:
-	@echo "--> Running Python tests"
-	coverage run --source=src/sentry -m py.test tests/integration tests/sentry
+test-plugins:
+	@echo "--> Building static assets"
+	@$(WEBPACK) --display errors-only
+	@echo "--> Running plugin tests"
+	py.test tests/sentry_plugins -vv --cov . --cov-report="xml:.artifacts/plugins.coverage.xml" --junit-xml=".artifacts/plugins.junit.xml"
 	@echo ""
-
 
 lint: lint-python lint-js
 
+# configuration for flake8 can be found in setup.cfg
 lint-python:
 	@echo "--> Linting python"
-	bin/lint --python
+	bash -eo pipefail -c "flake8 | tee .artifacts/flake8.pycodestyle.log"
 	@echo ""
+
+review-python-snapshots:
+	@cargo insta --version &> /dev/null || cargo install cargo-insta
+	@cargo insta review --workspace-root `pwd` -e pysnap
+
+accept-python-snapshots:
+	@cargo insta --version &> /dev/null || cargo install cargo-insta
+	@cargo insta accept --workspace-root `pwd` -e pysnap
+
+reject-python-snapshots:
+	@cargo insta --version &> /dev/null || cargo install cargo-insta
+	@cargo insta reject --workspace-root `pwd` -e pysnap
 
 lint-js:
 	@echo "--> Linting javascript"
-	bin/lint --js
+	bin/lint --js --parseable
 	@echo ""
-
-coverage: develop
-	make test-python-coverage
-	coverage html
 
 publish:
 	python setup.py sdist bdist_wheel upload
 
-extract-api-docs:
-	rm -rf api-docs/cache/*
-	cd api-docs; python generator.py
 
-
-.PHONY: develop dev-postgres dev-docs setup-git build clean locale update-transifex update-submodules test testloop test-cli test-js test-python test-acceptance test-python-coverage lint lint-python lint-js coverage publish
+.PHONY: develop develop-only test build test reset-db clean setup-git update-submodules node-version-check install-yarn-pkgs install-sentry-dev build-js-po locale update-transifex build-platform-assets test-cli test-js test-styleguide test-python test-snuba test-symbolicator test-acceptance lint lint-python lint-js publish
 
 
 ############################
 # Halt, Travis stuff below #
 ############################
 
-# Bases for all builds
-travis-upgrade-pip:
-	python -m pip install pip==8.1.1
-travis-setup-cassandra:
-	echo "create keyspace sentry with replication = {'class' : 'SimpleStrategy', 'replication_factor': 1};" | cqlsh --cqlversion=3.1.7
-	echo 'create table nodestore (key text primary key, value blob, flags int);' | cqlsh -k sentry --cqlversion=3.1.7
-travis-install-python: travis-upgrade-pip install-python install-python-tests travis-setup-cassandra
-	python -m pip install codecov
+.PHONY: travis-noop
 travis-noop:
 	@echo "nothing to do here."
 
-.PHONY: travis-upgrade-pip travis-setup-cassandra travis-install-python travis-noop
+.PHONY: travis-test-lint
+travis-test-lint: lint-python lint-js
 
-# Install steps
-travis-install-sqlite: travis-install-python
-travis-install-postgres: travis-install-python dev-postgres
-	psql -c 'create database sentry;' -U postgres
-travis-install-mysql: travis-install-python
-	pip install mysqlclient
-	echo 'create database sentry;' | mysql -uroot
-travis-install-js: install-npm
-travis-install-cli: travis-install-python
-travis-install-dist: travis-noop
-
-.PHONY: travis-install-sqlite travis-install-postgres travis-install-js travis-install-cli travis-install-dist
-
-# Lint steps
-travis-lint-sqlite: lint-python
-travis-lint-postgres: lint-python
-travis-lint-mysql: lint-python
-travis-lint-js: lint-js
-travis-lint-cli: travis-noop
-travis-lint-dist: travis-noop
-
-.PHONY: travis-lint-sqlite travis-lint-postgres travis-lint-mysql travis-lint-js travis-lint-cli travis-lint-dist
-
-# Test steps
-travis-test-sqlite: test-python-coverage
-travis-test-postgres: test-python-coverage
-travis-test-mysql: test-python-coverage
+.PHONY: travis-test-postgres travis-test-acceptance travis-test-snuba travis-test-symbolicator travis-test-js travis-test-cli travis-test-dist
+travis-test-postgres: test-python
+travis-test-acceptance: test-acceptance
+travis-test-snuba: test-snuba
+travis-test-symbolicator: test-symbolicator
 travis-test-js: test-js
-travis-test-ci: test-ci
+travis-test-cli: test-cli
+travis-test-plugins: test-plugins
 travis-test-dist:
-	SENTRY_BUILD=$(TRAVIS_COMMIT) SENTRY_LIGHT_BUILD=0 python setup.py sdist bdist_wheel
+	# NOTE: We quiet down output here to workaround an issue in travis that
+	# causes the build to fail with a EAGAIN when writing a large amount of
+	# data to STDOUT.
+	# See: https://github.com/travis-ci/travis-ci/issues/4704
+	SENTRY_BUILD=$(TRAVIS_COMMIT) SENTRY_LIGHT_BUILD=0 python setup.py -q sdist bdist_wheel
 	@ls -lh dist/
 
-.PHONY: travis-test-sqlite travis-test-postgres travis-test-mysql travis-test-js travis-test-cli travis-test-dist
+.PHONY: scan-python travis-scan-postgres travis-scan-acceptance travis-scan-snuba travis-scan-symbolicator travis-scan-js travis-scan-cli travis-scan-dist travis-scan-lint
+scan-python:
+	@echo "--> Running Python vulnerability scanner"
+	$(PIP) install safety $(PIP_OPTS)
+	bin/scan
+	@echo ""
+
+travis-scan-postgres: travis-noop
+travis-scan-acceptance: travis-noop
+travis-scan-snuba: travis-noop
+travis-scan-symbolicator: travis-noop
+travis-scan-js: travis-noop
+travis-scan-cli: travis-noop
+travis-scan-dist: travis-noop
+travis-scan-lint: scan-python
+travis-scan-plugins: travis-noop

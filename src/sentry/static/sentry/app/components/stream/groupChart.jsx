@@ -1,74 +1,52 @@
-import LazyLoad from 'react-lazy-load';
+import LazyLoad from 'react-lazyload';
+import PropTypes from 'prop-types';
 import React from 'react';
-import Reflux from 'reflux';
 
-import BarChart from '../barChart';
-import GroupStore from '../../stores/groupStore';
-import {valueIsEqual} from '../../utils';
+import BarChart from 'app/components/barChart';
 
-const GroupChart = React.createClass({
-  propTypes: {
-    id: React.PropTypes.string.isRequired,
-    statsPeriod: React.PropTypes.string.isRequired,
-  },
+class GroupChart extends React.Component {
+  static propTypes = {
+    statsPeriod: PropTypes.string.isRequired,
+    data: PropTypes.object.isRequired,
+    height: PropTypes.number,
+  };
 
-  mixins: [
-    Reflux.listenTo(GroupStore, 'onGroupChange')
-  ],
+  static defaultProps = {
+    height: 24,
+  };
 
-  getInitialState() {
-    let data = GroupStore.get(this.props.id);
-    return {
-      stats: data ? data.stats[this.props.statsPeriod] : null
-    };
-  },
-
-  componentWillReceiveProps(nextProps) {
-    if (!valueIsEqual(nextProps, this.props)) {
-      let data = GroupStore.get(this.props.id);
-      this.setState({
-        stats: data.stats[this.props.statsPeriod]
-      });
-    }
-  },
-
-  shouldComponentUpdate(nextProps, nextState) {
-    if (!valueIsEqual(this.props, nextProps, true)) {
-      return true;
-    }
-    if (!valueIsEqual(this.state.stats, nextState.stats, true)) {
-      return true;
-    }
-    return false;
-  },
-
-  onGroupChange(itemIds) {
-    if (!itemIds.has(this.props.id)) {
-      return;
-    }
-
-    let id = this.props.id;
-    let data = GroupStore.get(id);
-
-    this.setState({
-      stats: data.stats[this.props.statsPeriod],
-    });
-  },
+  shouldComponentUpdate(nextProps) {
+    // Sometimes statsPeriod updates before graph data has been
+    // pulled from server / propagated down to components ...
+    // don't update until data is available
+    const {data, statsPeriod} = nextProps;
+    return data.hasOwnProperty(statsPeriod);
+  }
 
   render() {
-    if (!this.state.stats || !this.state.stats.length)
+    const stats = this.props.statsPeriod
+      ? this.props.data.stats[this.props.statsPeriod]
+      : null;
+    if (!stats || !stats.length) {
       return null;
-
-    let chartData = this.state.stats.map((point) => {
+    }
+    const {height} = this.props;
+    const chartData = stats.map(point => {
       return {x: point[0], y: point[1]};
     });
 
     return (
-      <LazyLoad>
-        <BarChart points={chartData} className="sparkline" />
+      <LazyLoad debounce={50} height={height}>
+        <BarChart
+          points={chartData}
+          height={height}
+          label="events"
+          minHeights={[3]}
+          gap={1}
+        />
       </LazyLoad>
     );
   }
-});
+}
 
 export default GroupChart;

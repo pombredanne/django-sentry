@@ -1,15 +1,8 @@
-"""
-sentry.monitoring.queues
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2016 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
 from __future__ import absolute_import, print_function
 
-from urlparse import urlparse
 from django.conf import settings
 from django.utils.functional import cached_property
+from six.moves.urllib.parse import urlparse
 
 
 class RedisBackend(object):
@@ -19,6 +12,7 @@ class RedisBackend(object):
     @cached_property
     def client(self):
         from redis import StrictRedis
+
         return StrictRedis.from_url(self.broker_url)
 
     def bulk_get_sizes(self, queues):
@@ -48,6 +42,7 @@ class AmqpBackend(object):
 
     def get_conn(self):
         from librabbitmq import Connection
+
         return Connection(**self.conn_info)
 
     def _get_size_from_channel(self, channel, queue):
@@ -91,11 +86,8 @@ def get_queue_by_name(name):
         if queue.name == name:
             return queue
 
-backends = {
-    'redis': RedisBackend,
-    'amqp': AmqpBackend,
-    'librabbitmq': AmqpBackend,
-}
+
+backends = {"redis": RedisBackend, "amqp": AmqpBackend, "librabbitmq": AmqpBackend}
 
 try:
     backend = get_backend_for_broker(settings.BROKER_URL)

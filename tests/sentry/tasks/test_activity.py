@@ -2,13 +2,12 @@ from __future__ import absolute_import
 
 import mock
 
-from sentry.plugins import NotificationPlugin
+from sentry.plugins.bases.notify import NotificationPlugin
 from sentry.testutils import PluginTestCase
 from sentry.models import Activity
 
 
 class BasicPreprocessorPlugin(NotificationPlugin):
-
     def notify_about_activity(self, activity):
         pass
 
@@ -19,19 +18,16 @@ class BasicPreprocessorPlugin(NotificationPlugin):
 class ActivityNotificationsTest(PluginTestCase):
     plugin = BasicPreprocessorPlugin
 
-    @mock.patch('sentry.tasks.activity.send_activity_notifications')
+    @mock.patch("sentry.tasks.activity.send_activity_notifications")
     def test_simple(self, mock_func):
         group = self.create_group()
-        print mock_func
 
         activity = Activity.objects.create(
             project=group.project,
             group=group,
             type=Activity.ASSIGNED,
             user=self.user,
-            data={
-                'assignee': None,
-            }
+            data={"assignee": None},
         )
         activity.send_notification()
 

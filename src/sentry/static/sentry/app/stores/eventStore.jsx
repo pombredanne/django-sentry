@@ -1,5 +1,6 @@
-import jQuery from 'jquery';
+import $ from 'jquery';
 import Reflux from 'reflux';
+import isArray from 'lodash/isArray';
 
 const EventStore = Reflux.createStore({
   init() {
@@ -13,8 +14,8 @@ const EventStore = Reflux.createStore({
   loadInitialData(items) {
     this.reset();
 
-    let itemIds = new Set();
-    items.forEach((item) => {
+    const itemIds = new Set();
+    items.forEach(item => {
       itemIds.add(item.id);
       this.items.push(item);
     });
@@ -23,25 +24,25 @@ const EventStore = Reflux.createStore({
   },
 
   add(items) {
-    if (!items instanceof Array) {
+    if (!isArray(items)) {
       items = [items];
     }
 
-    let itemsById = {};
-    let itemIds = new Set();
-    items.forEach((item) => {
+    const itemsById = {};
+    const itemIds = new Set();
+    items.forEach(item => {
       itemsById[item.id] = item;
       itemIds.add(item.id);
     });
 
     items.forEach((item, idx) => {
       if (itemsById[item.id]) {
-        this.items[idx] = jQuery.extend(true, {}, item, itemsById[item.id]);
+        this.items[idx] = $.extend(true, {}, item, itemsById[item.id]);
         delete itemsById[item.id];
       }
     });
 
-    for (let itemId in itemsById) {
+    for (const itemId in itemsById) {
       this.items.push(itemsById[itemId]);
     }
 
@@ -64,16 +65,16 @@ const EventStore = Reflux.createStore({
         return this.items[i];
       }
     }
+    return undefined;
   },
 
   getAllItemIds() {
-    return this.items.map((item) => item.id);
+    return this.items.map(item => item.id);
   },
 
   getAllItems() {
     return this.items;
-  }
+  },
 });
 
 export default EventStore;
-

@@ -1,8 +1,13 @@
 import React from 'react';
-import _ from 'underscore';
-import ConfigStore from './stores/configStore';
-import {t} from './locale';
-import {EmailField, TextField, BooleanField} from './components/forms';
+import keyBy from 'lodash/keyBy';
+import ConfigStore from 'app/stores/configStore';
+import {t, tct} from 'app/locale';
+import {
+  EmailField,
+  TextField,
+  BooleanField,
+  RadioBooleanField,
+} from 'app/components/forms';
 
 // This are ordered based on their display order visually
 const sections = [
@@ -12,7 +17,15 @@ const sections = [
   {
     key: 'mail',
     heading: t('Outbound email'),
-  }
+  },
+  {
+    key: 'auth',
+    heading: t('Authentication'),
+  },
+  {
+    key: 'beacon',
+    heading: t('Beacon'),
+  },
 ];
 
 // This are ordered based on their display order visually
@@ -34,17 +47,83 @@ const definitions = [
     defaultValue: () => ConfigStore.get('user').email,
   },
   {
+    key: 'system.support-email',
+    label: t('Support Email'),
+    placeholder: 'support@example.com',
+    help: t('The support contact for this Sentry installation.'),
+    // TODO(dcramer): this should not be hardcoded to a component
+    component: EmailField,
+    defaultValue: () => ConfigStore.get('user').email,
+  },
+  {
+    key: 'system.security-email',
+    label: t('Security Email'),
+    placeholder: 'security@example.com',
+    help: t('The security contact for this Sentry installation.'),
+    // TODO(dcramer): this should not be hardcoded to a component
+    component: EmailField,
+    defaultValue: () => ConfigStore.get('user').email,
+  },
+  {
     key: 'system.rate-limit',
     label: t('Rate Limit'),
     placeholder: 'e.g. 500',
-    help: t('The maximum number of events the system should accept per minute. A value of 0 will disable the default rate limit.'),
+    help: t(
+      'The maximum number of events the system should accept per minute. A value of 0 will disable the default rate limit.'
+    ),
+  },
+  {
+    key: 'auth.allow-registration',
+    label: t('Allow Registration'),
+    help: t('Allow anyone to create an account and access this Sentry installation.'),
+    component: BooleanField,
+    defaultValue: () => false,
+  },
+  {
+    key: 'auth.ip-rate-limit',
+    label: t('IP Rate Limit'),
+    placeholder: 'e.g. 10',
+    help: t(
+      'The maximum number of times an authentication attempt may be made by a single IP address in a 60 second window.'
+    ),
+  },
+  {
+    key: 'auth.user-rate-limit',
+    label: t('User Rate Limit'),
+    placeholder: 'e.g. 10',
+    help: t(
+      'The maximum number of times an authentication attempt may be made against a single account in a 60 second window.'
+    ),
+  },
+  {
+    key: 'api.rate-limit.org-create',
+    label: 'Organization Creation Rate Limit',
+    placeholder: 'e.g. 5',
+    help: t(
+      'The maximum number of organizations which may be created by a single account in a one hour window.'
+    ),
+  },
+  {
+    key: 'beacon.anonymous',
+    label: 'Usage Statistics',
+    component: RadioBooleanField,
+    // yes and no are inverted here due to the nature of this configuration
+    noLabel: 'Send my contact information along with usage statistics',
+    yesLabel: 'Please keep my usage information anonymous',
+    yesFirst: false,
+    help: tct(
+      'If enabled, any stats reported to sentry.io will exclude identifying information (such as your administrative email address). By anonymizing your installation the Sentry team will be unable to contact you about security updates. For more information on what data is sent to Sentry, see the [link:documentation].',
+      {
+        link: <a href="https://docs.sentry.io/server/beacon/" />,
+      }
+    ),
   },
   {
     key: 'mail.from',
     label: t('Email From'),
     component: EmailField,
     defaultValue: () => `sentry@${document.location.hostname}`,
-    help: t('Email address to be used in From for all outbound email.')
+    help: t('Email address to be used in From for all outbound email.'),
   },
   {
     key: 'mail.host',
@@ -80,10 +159,11 @@ const definitions = [
   },
 ];
 
-const definitionsMap = _.indexBy(definitions, 'key');
+const definitionsMap = keyBy(definitions, def => def.key);
 
 const disabledReasons = {
-  diskPriority: 'This setting is defined in config.yml and may not be changed via the web UI.',
+  diskPriority:
+    'This setting is defined in config.yml and may not be changed via the web UI.',
   smtpDisabled: 'SMTP mail has been disabled, so this option is unavailable',
 };
 
@@ -91,26 +171,27 @@ export function getOption(option) {
   return definitionsMap[option];
 }
 
+export function getOptionDefault(option) {
+  const meta = getOption(option);
+  return meta.defaultValue ? meta.defaultValue() : undefined;
+}
+
 function optionsForSection(section) {
   return definitions.filter(option => option.key.split('.')[0] === section.key);
 }
 
-export function getOptionField(option, onChange, value, field) {
-  let meta = {...getOption(option), ...field};
-  let Field = meta.component || TextField;
+export function getOptionField(option, field) {
+  const meta = {...getOption(option), ...field};
+  const Field = meta.component || TextField;
   return (
     <Field
-        name={option}
-        key={option}
-        label={meta.label}
-        defaultValue={meta.defaultValue ? meta.defaultValue() : undefined}
-        placeholder={meta.placeholder}
-        help={meta.help}
-        onChange={onChange}
-        required={meta.required}
-        value={value}
-        disabled={meta.disabled}
-        disabledReason={meta.disabledReason && disabledReasons[meta.disabledReason]} />
+      {...meta}
+      name={option}
+      key={option}
+      defaultValue={getOptionDefault(option)}
+      required={meta.required && !meta.allowEmpty}
+      disabledReason={meta.disabledReason && disabledReasons[meta.disabledReason]}
+    />
   );
 }
 
@@ -127,10 +208,10 @@ export function getForm(fields) {
   // fields is a object mapping key name to Fields, so the goal is to split
   // them up into multiple sections, and spit out fieldsets with a grouping of
   // all fields, in the right order, under their section.
-  let sets = [];
-  for (let section of sections) {
-    let set = [];
-    for (let option of optionsForSection(section)) {
+  const sets = [];
+  for (const section of sections) {
+    const set = [];
+    for (const option of optionsForSection(section)) {
       if (fields[option.key]) {
         set.push(fields[option.key]);
       }

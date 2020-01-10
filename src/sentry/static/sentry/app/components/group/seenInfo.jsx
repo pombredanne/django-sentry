@@ -1,35 +1,119 @@
+import PropTypes from 'prop-types';
 import React from 'react';
-import DateTime from '../../components/dateTime';
-import TimeSince from '../../components/timeSince';
-import Version from '../../components/version';
-import utils from '../../utils';
-import {t} from '../../locale';
+import DateTime from 'app/components/dateTime';
+import TimeSince from 'app/components/timeSince';
+import Version from 'app/components/version';
+import VersionHoverCard from 'app/components/versionHoverCard';
+import Tooltip from 'app/components/tooltip';
+import {defined, toTitleCase} from 'app/utils';
+import {t} from 'app/locale';
 
-const SeenInfo = React.createClass({
-  propTypes: {
-    date: React.PropTypes.any.isRequired,
-    release: React.PropTypes.shape({
-      version: React.PropTypes.string.isRequired
+class SeenInfo extends React.Component {
+  static propTypes = {
+    orgId: PropTypes.string.isRequired,
+    projectId: PropTypes.string.isRequired,
+    date: PropTypes.any,
+    dateGlobal: PropTypes.any,
+    release: PropTypes.shape({
+      version: PropTypes.string.isRequired,
     }),
-    orgId: React.PropTypes.string.isRequired,
-    projectId: React.PropTypes.string.isRequired
-  },
+    environment: PropTypes.string,
+    hasRelease: PropTypes.bool.isRequired,
+    title: PropTypes.string.isRequired,
+  };
+
+  static contextTypes = {
+    organization: PropTypes.object,
+  };
+
+  shouldComponentUpdate(nextProps, _nextState) {
+    return (
+      (this.props.release || {}).version !== (nextProps.release || {}).version ||
+      this.props.date !== nextProps.date
+    );
+  }
+
+  getReleaseTrackingUrl() {
+    const {orgId, projectId} = this.props;
+
+    return `/settings/${orgId}/projects/${projectId}/release-tracking/`;
+  }
+
+  getTooltipTitle() {
+    const {date, dateGlobal, title, environment} = this.props;
+
+    return (
+      <div style={{width: '170px'}}>
+        <div className="time-label">{title}</div>
+        <dl className="flat">
+          {environment && [
+            <dt key="0">{toTitleCase(environment)}:</dt>,
+            <dd key="0.1">
+              <TimeSince date={date} />
+              <br />
+            </dd>,
+          ]}
+          <dt key="1">{t('Globally:')}</dt>
+          <dd key="1.1">
+            <TimeSince date={dateGlobal} />
+            <br />
+          </dd>
+        </dl>
+      </div>
+    );
+  }
 
   render() {
-    let {date, release} = this.props;
+    const {date, dateGlobal, environment, release, orgId, projectId} = this.props;
     return (
-      <dl>
+      <dl className="seen-info">
         <dt key={0}>{t('When')}:</dt>
-        <dd key={1}><TimeSince date={date} /></dd>
-        <dt key={2}>{t('Date')}:</dt>
-        <dd key={3}><DateTime date={date} seconds={true} /></dd>
-        {utils.defined(release) && [
-          <dt key={4}>{t('Release')}:</dt>,
-          <dd key={5}><Version orgId={this.props.orgId} projectId={this.props.projectId} version={release.version} /></dd>
-        ]}
+        {date ? (
+          <dd key={1}>
+            <Tooltip title={this.getTooltipTitle()}>
+              <TimeSince className="dotted-underline" date={date} />
+            </Tooltip>
+            <br />
+            <small>
+              <DateTime date={date} seconds />
+            </small>
+          </dd>
+        ) : dateGlobal && environment === '' ? (
+          <dd key={1}>
+            <Tooltip title={this.getTooltipTitle()}>
+              <TimeSince date={dateGlobal} />
+            </Tooltip>
+            <br />
+            <small>
+              <DateTime date={dateGlobal} seconds />
+            </small>
+          </dd>
+        ) : (
+          <dd key={1}>{t('n/a')}</dd>
+        )}
+        <dt key={4}>{t('Release')}:</dt>
+        {defined(release) ? (
+          <dd key={5}>
+            <VersionHoverCard
+              orgId={orgId}
+              projectId={projectId}
+              version={release.version}
+            >
+              <Version orgId={orgId} version={release.version} className="truncate" />
+            </VersionHoverCard>
+          </dd>
+        ) : !this.props.hasRelease ? (
+          <dd key={5}>
+            <small style={{marginLeft: 5, fontStyle: 'italic'}}>
+              <a href={this.getReleaseTrackingUrl()}>{t('not configured')}</a>
+            </small>
+          </dd>
+        ) : (
+          <dd key={5}>{t('n/a')}</dd>
+        )}
       </dl>
     );
   }
-});
+}
 
 export default SeenInfo;

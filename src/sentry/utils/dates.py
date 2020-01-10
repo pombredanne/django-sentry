@@ -1,35 +1,15 @@
-"""
-sentry.utils.dates
-~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
 from __future__ import absolute_import
 
-from datetime import (
-    datetime,
-    timedelta,
-)
+import six
+import re
+
+from datetime import datetime, timedelta
 
 import pytz
 from dateutil.parser import parse
 from django.db import connections
 
-from sentry.utils.db import get_db_engine
-
-
-DATE_TRUNC_GROUPERS = {
-    'oracle': {
-        'hour': 'hh24',
-    },
-    'default': {
-        'date': 'day',
-        'hour': 'hour',
-        'minute': 'minute',
-    },
-}
-
+DATE_TRUNC_GROUPERS = {"date": "day", "hour": "hour", "minute": "minute"}
 
 epoch = datetime(1970, 1, 1, tzinfo=pytz.utc)
 
@@ -52,17 +32,16 @@ def to_datetime(value):
     return epoch + timedelta(seconds=value)
 
 
-def get_sql_date_trunc(col, db='default', grouper='hour'):
-    conn = connections[db]
+def floor_to_utc_day(value):
+    """
+    Floors a given datetime to UTC midnight.
+    """
+    return value.astimezone(pytz.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
-    engine = get_db_engine(db)
-    # TODO: does extract work for sqlite?
-    if engine.startswith('oracle'):
-        method = DATE_TRUNC_GROUPERS['oracle'].get(grouper, DATE_TRUNC_GROUPERS['default'][grouper])
-        if '"' not in col:
-            col = '"%s"' % col.upper()
-    else:
-        method = DATE_TRUNC_GROUPERS['default'][grouper]
+
+def get_sql_date_trunc(col, db="default", grouper="hour"):
+    conn = connections[db]
+    method = DATE_TRUNC_GROUPERS[grouper]
     return conn.ops.date_trunc_sql(method, col)
 
 
@@ -71,13 +50,51 @@ def parse_date(datestr, timestr):
     if not (datestr or timestr):
         return
     if not timestr:
-        return datetime.strptime(datestr, '%Y-%m-%d')
+        return datetime.strptime(datestr, "%Y-%m-%d")
 
-    datetimestr = datestr.strip() + ' ' + timestr.strip()
+    datetimestr = datestr.strip() + " " + timestr.strip()
     try:
-        return datetime.strptime(datetimestr, '%Y-%m-%d %I:%M %p')
+        return datetime.strptime(datetimestr, "%Y-%m-%d %I:%M %p")
     except Exception:
         try:
             return parse(datetimestr)
         except Exception:
             return
+
+
+def parse_timestamp(value):
+    # TODO(mitsuhiko): merge this code with coreapis date parser
+    if isinstance(value, datetime):
+        return value
+    elif isinstance(value, six.integer_types + (float,)):
+        return datetime.utcfromtimestamp(value).replace(tzinfo=pytz.utc)
+    value = (value or "").rstrip("Z").encode("ascii", "replace").split(".", 1)
+    if not value:
+        return None
+    try:
+        rv = datetime.strptime(value[0], "%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return None
+    if len(value) == 2:
+        try:
+            rv = rv.replace(microsecond=int(value[1].ljust(6, "0")[:6]))
+        except ValueError:
+            rv = None
+    return rv.replace(tzinfo=pytz.utc)
+
+
+def parse_stats_period(period):
+    """
+    Convert a value such as 1h into a
+    proper timedelta.
+    """
+    m = re.match("^(\d+)([hdmsw]?)$", period)
+    if not m:
+        return None
+    value, unit = m.groups()
+    value = int(value)
+    if not unit:
+        unit = "s"
+    return timedelta(
+        **{{"h": "hours", "d": "days", "m": "minutes", "s": "seconds", "w": "weeks"}[unit]: value}
+    )

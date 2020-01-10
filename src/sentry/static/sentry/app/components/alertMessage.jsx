@@ -1,49 +1,76 @@
+import PropTypes from 'prop-types';
 import React from 'react';
-import AlertActions from '../actions/alertActions';
-import PureRenderMixin from 'react-addons-pure-render-mixin';
-import {t} from '../locale';
+import styled from 'react-emotion';
 
-const AlertMessage = React.createClass({
-  propTypes: {
-    alert: React.PropTypes.shape({
-      id: React.PropTypes.string,
-      message: React.PropTypes.string.isRequired,
-      type: React.PropTypes.oneOf([
-        'success',
-        'error',
-        'warning'
-      ]),
-      url: React.PropTypes.string
-    })
-  },
+import Alert from 'app/components/alert';
+import AlertActions from 'app/actions/alertActions';
+import InlineSvg from 'app/components/inlineSvg';
+import {t} from 'app/locale';
 
-  mixins: [PureRenderMixin],
+const StyledAlert = styled(Alert)`
+  padding: ${p => p.theme.grid}px ${p => p.theme.grid * 2}px;
+  position: relative;
+  margin: 0;
+  padding-right: ${p => p.theme.grid * 4}px;
+`;
 
-  closeAlert: function() {
-    AlertActions.closeAlert(this.props.alert);
-  },
+const StyledInlineSvg = styled(InlineSvg)`
+  /* Exists soley to enable its use as a selector in StyledCloseButton */
+`;
 
-  render: function() {
-    let className = 'alert';
-    if (this.props.alert.type !== '') {
-      className += ' alert-' + this.props.alert.type;
-    }
+const StyledCloseButton = styled('button')`
+  background: none;
+  border: 0;
+  opacity: 0.4;
+  transition: opacity 0.2s linear;
+  position: absolute;
+  right: ${p => p.theme.grid}px;
+  top: 7px;
 
-    return (
-      <div className={className}>
-        <div className="container">
-          <button type="button" className="close" aria-label={t('Close')}
-                  onClick={this.closeAlert}>
-            <span aria-hidden="true">&times;</span>
-          </button>
-          <span className="icon"></span>
-          {this.props.alert.url
-            ? <a href={this.props.alert.url}>{this.props.alert.message}</a>
-            : this.props.alert.message}
-        </div>
-      </div>
-    );
+  &:hover {
+    opacity: 0.8;
   }
-});
+`;
 
-export default AlertMessage;
+export default class AlertMessage extends React.PureComponent {
+  static propTypes = {
+    alert: PropTypes.shape({
+      id: PropTypes.string,
+      message: PropTypes.node.isRequired,
+      type: PropTypes.oneOf(['success', 'error', 'warning', 'info']),
+      url: PropTypes.string,
+    }),
+    system: PropTypes.bool,
+  };
+
+  closeAlert = () => {
+    AlertActions.closeAlert(this.props.alert);
+  };
+
+  render = () => {
+    const {alert, system} = this.props;
+    let icon;
+
+    if (alert.type === 'success') {
+      icon = 'icon-circle-check';
+    } else {
+      icon = 'icon-circle-exclamation';
+    }
+    return (
+      <StyledAlert type={this.props.alert.type} icon={icon} system={system}>
+        <StyledCloseButton
+          type="button"
+          aria-label={t('Close')}
+          onClick={this.closeAlert}
+        >
+          <StyledInlineSvg aria-hidden="true" src="icon-circle-close" />
+        </StyledCloseButton>
+        {this.props.alert.url ? (
+          <a href={this.props.alert.url}>{this.props.alert.message}</a>
+        ) : (
+          this.props.alert.message
+        )}
+      </StyledAlert>
+    );
+  };
+}

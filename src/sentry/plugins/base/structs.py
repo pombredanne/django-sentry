@@ -1,21 +1,11 @@
-"""
-sentry.plugins.base.structs
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
-
 from __future__ import absolute_import, print_function
 
-__all__ = ('Annotation', 'Notification')
+__all__ = ("Annotation", "Notification")
 
 import warnings
 
 
 class Annotation(object):
-    __slots__ = ['label', 'url', 'description']
-
     def __init__(self, label, url=None, description=None):
         self.label = label
         self.url = url
@@ -23,8 +13,6 @@ class Annotation(object):
 
 
 class Notification(object):
-    __slots__ = ['event', 'rule', 'rules']
-
     def __init__(self, event, rule=None, rules=None):
         if rule and not rules:
             rules = [rule]
@@ -34,6 +22,7 @@ class Notification(object):
 
     @property
     def rule(self):
-        warnings.warn('Notification.rule is deprecated. Switch to Notification.rules.',
-                      DeprecationWarning)
+        warnings.warn(
+            "Notification.rule is deprecated. Switch to Notification.rules.", DeprecationWarning
+        )
         return self.rules[0]

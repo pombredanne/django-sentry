@@ -1,4 +1,5 @@
 {% load i18n %}
+{% load sentry_avatars %}
 {% load sentry_helpers %}
 <table class="reset">
   <tr>
@@ -46,7 +47,7 @@
     {% if user_email %}
       <td style="padding-top:5px; width:64px; vertical-align:top; text-align: right;">
         <span class="avatar-container" style="width: inherit;">
-          {% email_avatar user.get_display_name user.get_label size 64 %}
+          {% email_avatar user.get_display_name user.get_label 64 %}
         </span>
       </td>
     {% endif %}

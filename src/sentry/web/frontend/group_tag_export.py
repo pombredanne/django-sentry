@@ -1,74 +1,108 @@
 from __future__ import absolute_import
 
-import csv
+from django.http import Http404
 
-from django.http import Http404, StreamingHttpResponse
-from django.utils.text import slugify
-
-from sentry.models import (
-    GroupTagValue, TagKey, TagKeyStatus, Group, get_group_with_redirect
-)
+from sentry import tagstore
+from sentry.api.base import EnvironmentMixin
+from sentry.models import Environment, EventUser, Group, get_group_with_redirect
 from sentry.web.frontend.base import ProjectView
+from sentry.web.frontend.mixins.csv import CsvMixin
 
 
-# csv.writer doesn't provide a non-file interface
-# https://docs.djangoproject.com/en/1.9/howto/outputting-csv/#streaming-large-csv-files
-class Echo(object):
-    def write(self, value):
-        return value
+def attach_eventuser(project_id):
+    def wrapped(items):
+        users = EventUser.for_tags(project_id, [i.value for i in items])
+        for item in items:
+            item._eventuser = users.get(item.value)
+
+    return wrapped
 
 
-class GroupTagExportView(ProjectView):
-    required_scope = 'event:read'
+class GroupTagExportView(ProjectView, CsvMixin, EnvironmentMixin):
+    required_scope = "event:read"
 
-    def get(self, request, organization, project, team, group_id, key):
+    def get_header(self, key):
+        if key == "user":
+            return self.get_user_header()
+        return self.get_generic_header()
+
+    def get_row(self, item, key):
+        if key == "user":
+            return self.get_user_row(item)
+        return self.get_generic_row(item)
+
+    def get_generic_header(self):
+        return ("value", "times_seen", "last_seen", "first_seen")
+
+    def get_generic_row(self, item):
+        return (
+            item.value,
+            item.times_seen,
+            item.last_seen.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            item.first_seen.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        )
+
+    def get_user_header(self):
+        return (
+            "value",
+            "id",
+            "email",
+            "username",
+            "ip_address",
+            "times_seen",
+            "last_seen",
+            "first_seen",
+        )
+
+    def get_user_row(self, item):
+        euser = item._eventuser
+        return (
+            item.value,
+            euser.ident if euser else "",
+            euser.email if euser else "",
+            euser.username if euser else "",
+            euser.ip_address if euser else "",
+            item.times_seen,
+            item.last_seen.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            item.first_seen.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        )
+
+    def get(self, request, organization, project, group_id, key):
         try:
             # TODO(tkaemming): This should *actually* redirect, see similar
             # comment in ``GroupEndpoint.convert_args``.
             group, _ = get_group_with_redirect(
-                group_id,
-                queryset=Group.objects.filter(project=project),
+                group_id, queryset=Group.objects.filter(project=project)
             )
         except Group.DoesNotExist:
             raise Http404
 
-        if TagKey.is_reserved_key(key):
-            lookup_key = 'sentry:{0}'.format(key)
+        if tagstore.is_reserved_key(key):
+            lookup_key = u"sentry:{0}".format(key)
         else:
             lookup_key = key
 
-        # validate existance as it may be deleted
         try:
-            TagKey.objects.get(
-                project=group.project_id,
-                key=lookup_key,
-                status=TagKeyStatus.VISIBLE,
-            )
-        except TagKey.DoesNotExist:
+            environment_id = self._get_environment_id_from_request(request, project.organization_id)
+        except Environment.DoesNotExist:
+            # if the environment doesn't exist then the tag can't possibly exist
             raise Http404
 
-        queryset = GroupTagValue.objects.filter(
-            group=group,
-            key=lookup_key,
+        # validate existence as it may be deleted
+        try:
+            tagstore.get_tag_key(project.id, environment_id, lookup_key)
+        except tagstore.TagKeyNotFound:
+            raise Http404
+
+        if key == "user":
+            callbacks = [attach_eventuser(project.id)]
+        else:
+            callbacks = []
+
+        gtv_iter = tagstore.get_group_tag_value_iter(
+            group.project_id, group.id, environment_id, lookup_key, callbacks=callbacks
         )
 
-        def row_iter():
-            yield ('value', 'times_seen', 'last_seen', 'first_seen')
-            for row in queryset.iterator():
-                yield (
-                    row.value.encode('utf-8'),
-                    str(row.times_seen),
-                    row.last_seen.strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
-                    row.first_seen.strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
-                )
+        filename = u"{}-{}".format(group.qualified_short_id or group.id, key)
 
-        pseudo_buffer = Echo()
-        writer = csv.writer(pseudo_buffer)
-        response = StreamingHttpResponse(
-            (writer.writerow(r) for r in row_iter()),
-            content_type='text/csv'
-        )
-        response['Content-Disposition'] = 'attachment; filename="{}-{}.csv"'.format(
-            group.qualified_short_id or group.id, slugify(key)
-        )
-        return response
+        return self.to_csv_response(gtv_iter, filename, key=key)

@@ -1,37 +1,45 @@
+import PropTypes from 'prop-types';
 import React from 'react';
-import PureRenderMixin from 'react-addons-pure-render-mixin';
-import ProjectState from '../mixins/projectState';
+import styled from 'react-emotion';
+import isPropValid from '@emotion/is-prop-valid';
 
-import AutoSelectText from './autoSelectText';
+import AutoSelectText from 'app/components/autoSelectText';
 
-const ShortId = React.createClass({
-  propTypes: {
-    shortId: React.PropTypes.string,
-    project: React.PropTypes.object
-  },
-
-  mixins: [
-    PureRenderMixin,
-    ProjectState
-  ],
-
+export default class ShortId extends React.Component {
+  static propTypes = {
+    shortId: PropTypes.string,
+    avatar: PropTypes.node,
+  };
   preventPropagation(e) {
     // this is a hack for the stream so the click handler doesn't
     // affect this element
     e.stopPropagation();
-  },
+  }
 
   render() {
-    let shortId = this.props.shortId;
-    if (!this.getFeatures().has('callsigns') || !shortId) {
+    const {shortId, avatar} = this.props;
+
+    if (!shortId) {
       return null;
     }
+
     return (
-      <span className="short-id" onClick={this.preventPropagation}>
-        <AutoSelectText>{shortId}</AutoSelectText>
-      </span>
+      <StyledShortId onClick={this.preventPropagation} {...this.props}>
+        {avatar}
+        <StyledAutoSelectText avatar={!!avatar}>{shortId}</StyledAutoSelectText>
+      </StyledShortId>
     );
   }
-});
+}
 
-export default ShortId;
+const StyledShortId = styled('div')`
+  font-family: ${p => p.theme.text.familyMono};
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+`;
+
+const StyledAutoSelectText = styled(AutoSelectText, {shouldForwardProp: isPropValid})`
+  margin-left: ${p => p.avatar && '0.5em'};
+  min-width: 0;
+`;

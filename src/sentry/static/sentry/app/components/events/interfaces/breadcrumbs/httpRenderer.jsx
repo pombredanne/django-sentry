@@ -1,26 +1,31 @@
+import PropTypes from 'prop-types';
 import React from 'react';
 
-import CrumbTable from './crumbTable';
-import SummaryLine from './summaryLine';
+import {t} from 'app/locale';
+import CrumbTable from 'app/components/events/interfaces/breadcrumbs/crumbTable';
+import SummaryLine from 'app/components/events/interfaces/breadcrumbs/summaryLine';
 
+class HttpRenderer extends React.Component {
+  static propTypes = {
+    crumb: PropTypes.object.isRequired,
+  };
 
-const HttpRenderer = React.createClass({
-  propTypes: {
-    crumb: React.PropTypes.object.isRequired,
-  },
+  renderUrl = url => {
+    if (typeof url === 'string') {
+      return url.match(/^https?:\/\//) ? <a href={url}>{url}</a> : <em>{url}</em>;
+    }
 
-  renderUrl(url) {
-    return (
-      url.match(/^https?:\/\//)
-        ? <a href={url}>{url}</a>
-        : <em>{url}</em>
-    );
-  },
+    try {
+      return JSON.stringify(url);
+    } catch (e) {
+      return t('Invalid URL');
+    }
+  };
 
   render() {
-    let {crumb} = this.props;
-    let {method, status_code, reason, url, ...extra} = crumb.data;
-    let summary = (
+    const {crumb} = this.props;
+    const {method, status_code, url, ...extra} = crumb.data || {};
+    const summary = (
       <SummaryLine crumb={crumb}>
         <pre>
           <code>
@@ -33,13 +38,9 @@ const HttpRenderer = React.createClass({
     );
 
     return (
-      <CrumbTable
-        title="HTTP Request"
-        summary={summary}
-        kvData={extra}
-        {...this.props} />
+      <CrumbTable title="HTTP Request" summary={summary} kvData={extra} {...this.props} />
     );
   }
-});
+}
 
 export default HttpRenderer;

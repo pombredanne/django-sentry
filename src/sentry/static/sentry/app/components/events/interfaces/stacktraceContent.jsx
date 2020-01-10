@@ -1,50 +1,75 @@
+import PropTypes from 'prop-types';
 import React from 'react';
-//import GroupEventDataSection from "../eventDataSection";
-import Frame from './frame';
-import OldFrame from './oldFrame';
-import {t} from '../../../locale';
-import OrganizationState from '../../../mixins/organizationState';
+import get from 'lodash/get';
 
+import Frame from 'app/components/events/interfaces/frame';
+import {t} from 'app/locale';
+import SentryTypes from 'app/sentryTypes';
+import {parseAddress, getImageRange} from 'app/components/events/interfaces/utils';
 
-const StacktraceContent = React.createClass({
-  propTypes: {
-    data: React.PropTypes.object.isRequired,
-    includeSystemFrames: React.PropTypes.bool,
-    platform: React.PropTypes.string,
-    newestFirst: React.PropTypes.bool
-  },
-  mixins: [OrganizationState],
+export default class StacktraceContent extends React.Component {
+  static propTypes = {
+    data: PropTypes.object.isRequired,
+    includeSystemFrames: PropTypes.bool,
+    expandFirstFrame: PropTypes.bool,
+    platform: PropTypes.string,
+    newestFirst: PropTypes.bool,
+    event: SentryTypes.Event.isRequired,
+  };
 
-  getDefaultProps() {
-    return {
-      includeSystemFrames: true
-    };
-  },
+  static defaultProps = {
+    includeSystemFrames: true,
+    expandFirstFrame: true,
+  };
 
-  shouldRenderAsTable() {
-    return this.props.platform === 'cocoa';
-  },
+  state = {
+    showingAbsoluteAddresses: false,
+  };
 
-  renderOmittedFrames(firstFrameOmitted, lastFrameOmitted) {
-    let props = {
+  renderOmittedFrames = (firstFrameOmitted, lastFrameOmitted) => {
+    const props = {
       className: 'frame frames-omitted',
-      key: 'omitted'
+      key: 'omitted',
     };
-    let text = t('Frames %d until %d were omitted and not available.',
-                 firstFrameOmitted, lastFrameOmitted);
-    return <li {...props}>{text}</li>;
-  },
-
-  frameIsVisible(frame, nextFrame) {
-    return (
-      this.props.includeSystemFrames ||
-      frame.inApp ||
-      (nextFrame && nextFrame.inApp)
+    const text = t(
+      'Frames %d until %d were omitted and not available.',
+      firstFrameOmitted,
+      lastFrameOmitted
     );
-  },
+    return <li {...props}>{text}</li>;
+  };
+
+  frameIsVisible = (frame, nextFrame) => {
+    return (
+      this.props.includeSystemFrames || frame.inApp || (nextFrame && nextFrame.inApp)
+    );
+  };
+
+  findImageForAddress(address) {
+    const images = get(
+      this.props.event.entries.find(entry => entry.type === 'debugmeta'),
+      'data.images'
+    );
+
+    return images
+      ? images.find(img => {
+          const [startAddress, endAddress] = getImageRange(img);
+          return address >= startAddress && address < endAddress;
+        })
+      : null;
+  }
+
+  handleToggleAddresses = event => {
+    event.stopPropagation(); // to prevent collapsing if collapsable
+
+    this.setState(prevState => ({
+      showingAbsoluteAddresses: !prevState.showingAbsoluteAddresses,
+    }));
+  };
 
   render() {
-    let data = this.props.data;
+    const data = this.props.data;
+    const {showingAbsoluteAddresses} = this.state;
     let firstFrameOmitted, lastFrameOmitted;
 
     if (data.framesOmitted) {
@@ -57,46 +82,102 @@ const StacktraceContent = React.createClass({
 
     let lastFrameIdx = null;
     data.frames.forEach((frame, frameIdx) => {
-      if (frame.inApp) lastFrameIdx = frameIdx;
+      if (frame.inApp) {
+        lastFrameIdx = frameIdx;
+      }
     });
     if (lastFrameIdx === null) {
       lastFrameIdx = data.frames.length - 1;
     }
 
-    // use old frames if we do not have an org (share view) or
-    // we don't have the feature
-    let oldFrames = !this.context.organization || !this.getFeatures().has('new-tracebacks');
-    let FrameComponent = Frame;
-    if (oldFrames) {
-      FrameComponent = OldFrame;
-    }
+    const expandFirstFrame = this.props.expandFirstFrame;
+    const frames = [];
+    let nRepeats = 0;
 
-    let frames = [];
+    const maxLengthOfAllRelativeAddresses = data.frames.reduce(
+      (maxLengthUntilThisPoint, frame) => {
+        const correspondingImage = this.findImageForAddress(frame.instructionAddr);
+
+        try {
+          const relativeAddress = (
+            parseAddress(frame.instructionAddr) -
+            parseAddress(correspondingImage.image_addr)
+          ).toString(16);
+
+          return maxLengthUntilThisPoint > relativeAddress.length
+            ? maxLengthUntilThisPoint
+            : relativeAddress.length;
+        } catch {
+          return maxLengthUntilThisPoint;
+        }
+      },
+      0
+    );
+
     data.frames.forEach((frame, frameIdx) => {
-      let nextFrame = data.frames[frameIdx + 1];
-      if (this.frameIsVisible(frame, nextFrame)) {
+      const prevFrame = data.frames[frameIdx - 1];
+      const nextFrame = data.frames[frameIdx + 1];
+      const repeatedFrame =
+        nextFrame &&
+        frame.lineNo === nextFrame.lineNo &&
+        frame.instructionAddr === nextFrame.instructionAddr &&
+        frame.package === nextFrame.package &&
+        frame.module === nextFrame.module &&
+        frame.function === nextFrame.function;
+
+      if (repeatedFrame) {
+        nRepeats++;
+      }
+
+      if (this.frameIsVisible(frame, nextFrame) && !repeatedFrame) {
+        const image = this.findImageForAddress(frame.instructionAddr);
+
         frames.push(
-          <FrameComponent
+          <Frame
             key={frameIdx}
             data={frame}
-            isExpanded={lastFrameIdx === frameIdx}
+            isExpanded={expandFirstFrame && lastFrameIdx === frameIdx}
             emptySourceNotation={lastFrameIdx === frameIdx && frameIdx === 0}
-            nextFrameInApp={nextFrame && nextFrame.inApp}
-            platform={this.props.platform} />
+            isOnlyFrame={this.props.data.frames.length === 1}
+            nextFrame={nextFrame}
+            prevFrame={prevFrame}
+            platform={this.props.platform}
+            timesRepeated={nRepeats}
+            showingAbsoluteAddress={showingAbsoluteAddresses}
+            onAddressToggle={this.handleToggleAddresses}
+            image={image}
+            maxLengthOfRelativeAddress={maxLengthOfAllRelativeAddresses}
+          />
         );
       }
+
+      if (!repeatedFrame) {
+        nRepeats = 0;
+      }
+
       if (frameIdx === firstFrameOmitted) {
-        frames.push(this.renderOmittedFrames(
-          firstFrameOmitted, lastFrameOmitted));
+        frames.push(this.renderOmittedFrames(firstFrameOmitted, lastFrameOmitted));
       }
     });
+
+    if (frames.length > 0 && data.registers) {
+      const lastFrame = frames.length - 1;
+      frames[lastFrame] = React.cloneElement(frames[lastFrame], {
+        registers: data.registers,
+      });
+    }
 
     if (this.props.newestFirst) {
       frames.reverse();
     }
-
     let className = this.props.className || '';
-    className += (oldFrames ? ' old-traceback' : ' traceback');
+    className += ' traceback';
+
+    if (this.props.includeSystemFrames) {
+      className += ' full-traceback';
+    } else {
+      className += ' in-app-traceback';
+    }
 
     return (
       <div className={className}>
@@ -104,6 +185,4 @@ const StacktraceContent = React.createClass({
       </div>
     );
   }
-});
-
-export default StacktraceContent;
+}

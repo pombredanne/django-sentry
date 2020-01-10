@@ -1,134 +1,191 @@
-import moment from 'moment';
 import React from 'react';
-import {valueIsEqual} from '../utils';
-import TooltipMixin from '../mixins/tooltip';
+import PropTypes from 'prop-types';
+import classNames from 'classnames';
+import moment from 'moment-timezone';
+import isEqual from 'lodash/isEqual';
+import styled from 'react-emotion';
 
-const StackedBarChart = React.createClass({
-  propTypes: {
-    points: React.PropTypes.arrayOf(React.PropTypes.shape({
-      x: React.PropTypes.number.isRequired,
-      y: React.PropTypes.array.isRequired,
-      label: React.PropTypes.string
-    })),
-    interval: React.PropTypes.string,
-    height: React.PropTypes.number,
-    width: React.PropTypes.number,
-    placement: React.PropTypes.string,
-    label: React.PropTypes.string,
-    markers: React.PropTypes.arrayOf(React.PropTypes.shape({
-      x: React.PropTypes.number.isRequired,
-      label: React.PropTypes.string
-    })),
-    barClasses: React.PropTypes.array
-  },
+import Tooltip from 'app/components/tooltip';
+import Count from 'app/components/count';
+import ConfigStore from 'app/stores/configStore';
+import theme from 'app/utils/theme';
+import floatFormat from 'app/utils/floatFormat';
 
-  mixins: [
-    TooltipMixin(function () {
-      let barChartInstance = this;
-      return {
-        html: true,
-        placement: this.props.placement,
-        selector: '.tip',
-        viewport: this.props.viewport,
+class StackedBarChart extends React.Component {
+  static propTypes = {
+    // TODO(dcramer): DEPRECATED, use series instead
+    points: PropTypes.arrayOf(
+      PropTypes.shape({
+        x: PropTypes.number.isRequired,
+        y: PropTypes.array.isRequired,
+        label: PropTypes.string,
+      })
+    ),
+    series: PropTypes.arrayOf(
+      PropTypes.shape({
+        data: PropTypes.arrayOf(
+          PropTypes.shape({
+            x: PropTypes.number.isRequired,
+            y: PropTypes.number,
+          })
+        ),
+        label: PropTypes.string,
+      })
+    ),
+    height: PropTypes.number,
+    width: PropTypes.number,
+    label: PropTypes.string,
+    markers: PropTypes.arrayOf(
+      PropTypes.shape({
+        x: PropTypes.number.isRequired,
+        label: PropTypes.string,
+      })
+    ),
+    tooltip: PropTypes.func,
+    barClasses: PropTypes.array,
+    /* Some bars need to be visible and interactable even if they are
+    empty. Use minHeights for that. Units are in svg points */
+    minHeights: PropTypes.arrayOf(PropTypes.number),
+    /* the amount of space between bars. Also represents an svg point */
+    gap: PropTypes.number,
+  };
 
-        // This callback is fired when the user hovers over the
-        // barchart / triggers tooltip rendering. This is better
-        // than using data-title, which renders up-front for each
-        // StackedBarChart (slow).
-        title: function (instance) {
-          // `this` is the targeted element
-          let pointIdx = this.getAttribute('data-point-index');
+  static defaultProps = {
+    className: 'sparkline',
+    height: null,
+    label: '',
+    points: [],
+    series: [],
+    markers: [],
+    width: null,
+    barClasses: ['chart-bar'],
+    gap: 0.5,
+  };
 
-          if (pointIdx)
-            return barChartInstance.renderTooltip(pointIdx);
-          else
-            return this.getAttribute('data-title');
-        }
-      };
-    })
-  ],
+  constructor(props) {
+    super(props);
 
-  statics: {
-    getInterval(points) {
-      return points.length > 1 ? points[1].x - points[0].x : null;
+    // massage points
+    let series = this.props.series;
+
+    if (this.props.points.length) {
+      if (series.length) {
+        throw new Error('Only one of [points|series] should be specified.');
+      }
+
+      series = this.pointsToSeries(this.props.points);
     }
-  },
 
-  getDefaultProps() {
-    return {
-      className: '',
-      height: null,
-      label: 'events',
-      placement: 'bottom',
-      points: [],
-      markers: [],
-      width: null,
-      barClasses: ['chart-bar']
+    this.state = {
+      series,
+      pointIndex: this.pointIndex(series),
+      interval: this.getInterval(series),
     };
-  },
-
-  getInitialState() {
-    return {
-      interval: StackedBarChart.getInterval(this.props.points)
-    };
-  },
+  }
 
   componentWillReceiveProps(nextProps) {
-    if (nextProps.points) {
+    if (nextProps.points || nextProps.series) {
+      let series = nextProps.series;
+      if (nextProps.points.length) {
+        if (series.length) {
+          throw new Error('Only one of [points|series] should be specified.');
+        }
+
+        series = this.pointsToSeries(nextProps.points);
+      }
+
       this.setState({
-        interval: StackedBarChart.getInterval(nextProps.points)
+        series,
+        pointIndex: this.pointIndex(series),
+        interval: this.getInterval(series),
       });
     }
-  },
+  }
 
-  shouldComponentUpdate(nextProps, nextState) {
-    return !valueIsEqual(this.props, nextProps, true);
-  },
+  shouldComponentUpdate(nextProps, _nextState) {
+    return !isEqual(this.props, nextProps);
+  }
 
-  floatFormat(number, places) {
-    let multi = Math.pow(10, places);
-    return parseInt(number * multi, 10) / multi;
-  },
+  getInterval = series => {
+    // TODO(dcramer): not guaranteed correct
+    return series.length && series[0].data.length > 1
+      ? series[0].data[1].x - series[0].data[0].x
+      : null;
+  };
+
+  pointsToSeries = points => {
+    const series = [];
+    points.forEach((p, _pIdx) => {
+      p.y.forEach((y, yIdx) => {
+        if (!series[yIdx]) {
+          series[yIdx] = {data: []};
+        }
+        series[yIdx].data.push({x: p.x, y});
+      });
+    });
+    return series;
+  };
+
+  pointIndex = series => {
+    const points = {};
+    series.forEach(s => {
+      s.data.forEach(p => {
+        if (!points[p.x]) {
+          points[p.x] = {y: [], x: p.x};
+        }
+        points[p.x].y.push(p.y);
+      });
+    });
+    return points;
+  };
+
+  use24Hours() {
+    const user = ConfigStore.get('user');
+    const options = user ? user.options : {};
+    return options.clock24Hours;
+  }
 
   timeLabelAsHour(point) {
-    let timeMoment = moment(point.x * 1000);
-    let nextMoment = timeMoment.clone().add(59, 'minute');
+    const timeMoment = moment(point.x * 1000);
+    const nextMoment = timeMoment.clone().add(59, 'minute');
+    const format = this.use24Hours() ? 'HH:mm' : 'LT';
 
     return (
-      '<span>' +
-        timeMoment.format('LL') + '<br />' +
-        timeMoment.format('LT') + '  &#8594; ' + nextMoment.format('LT') +
-      '</span>'
+      <span>
+        {timeMoment.format('LL')}
+        <br />
+        {timeMoment.format(format)}
+        &#8594;
+        {nextMoment.format(format)}
+      </span>
     );
-  },
+  }
 
   timeLabelAsDay(point) {
-    let timeMoment = moment(point.x * 1000);
+    const timeMoment = moment(point.x * 1000);
 
-    return (
-      '<span>' +
-        timeMoment.format('LL') +
-      '</span>'
-    );
-  },
+    return <span>{timeMoment.format('LL')}</span>;
+  }
 
   timeLabelAsRange(interval, point) {
-    let timeMoment = moment(point.x * 1000);
-    let nextMoment = timeMoment.clone().add(interval - 1, 'second');
+    const timeMoment = moment(point.x * 1000);
+    const nextMoment = timeMoment.clone().add(interval - 1, 'second');
+    const format = this.use24Hours() ? 'MMM Do, HH:mm' : 'MMM Do, h:mm a';
 
+    // e.g. Aug 23rd, 12:50 pm
     return (
-      '<span>' +
-        // e.g. Aug 23rd, 12:50 pm
-        timeMoment.format('MMM Do, h:mm a') +
-        ' &#8594 ' + nextMoment.format('MMM Do, h:mm a') +
-      '</span>'
+      <span>
+        {timeMoment.format(format)}
+        &#8594
+        {nextMoment.format(format)}
+      </span>
     );
-  },
+  }
 
   timeLabelAsFull(point) {
-    let timeMoment = moment(point.x * 1000);
+    const timeMoment = moment(point.x * 1000);
     return timeMoment.format('lll');
-  },
+  }
 
   getTimeLabel(point) {
     switch (this.state.interval) {
@@ -141,127 +198,246 @@ const StackedBarChart = React.createClass({
       default:
         return this.timeLabelAsRange(this.state.interval, point);
     }
-  },
+  }
 
   maxPointValue() {
-    let maxval = 10;
-    this.props.points.forEach((point) => {
-      let totalY = 0;
-      point.y.forEach((y) => {
-        totalY += y;
-      });
-      if (totalY > maxval) {
-        maxval = totalY;
-      }
-    });
-    return maxval;
-  },
-
-  renderMarker(marker) {
-    let timeLabel = moment(marker.x * 1000).format('lll');
-    let title = (
-      '<div style="width:130px">' +
-        marker.label + '<br/>' +
-        timeLabel +
-      '</div>'
+    return Math.max(
+      10,
+      this.state.series
+        .map(s => Math.max(...s.data.map(p => p.y)))
+        .reduce((a, b) => a + b, 0)
     );
-    let className = 'chart-marker tip ' + (marker.className || '');
+  }
+
+  renderMarker(marker, index, pointWidth) {
+    const timeLabel = moment(marker.x * 1000).format('lll');
+    const title = (
+      <div style={{width: '130px'}}>
+        {marker.label}
+        <br />
+        {timeLabel}
+      </div>
+    );
 
     // example key: m-last-seen-22811123, m-first-seen-228191
-    let key = ['m', marker.className, marker.x].join('-');
+    const key = ['m', marker.className, marker.x].join('-');
+    const markerOffset = marker.offset || 0;
 
     return (
-      <a key={key} className={className} data-title={title}>
-        <span>{marker.label}</span>
-      </a>
+      <CircleSvg
+        key={key}
+        left={index * pointWidth}
+        offset={markerOffset || 0}
+        viewBox="0 0 10 10"
+        size={10}
+      >
+        <Tooltip title={title} position="bottom">
+          <circle
+            data-test-id="chart-column"
+            r="4"
+            cx="50%"
+            cy="50%"
+            fill={marker.fill || theme.gray2}
+            stroke="#fff"
+            strokeWidth="2"
+          >
+            {marker.label}
+          </circle>
+        </Tooltip>
+      </CircleSvg>
     );
-  },
+  }
 
-  renderTooltip(pointIdx) {
-    let point = this.props.points[pointIdx];
-    let timeLabel = this.getTimeLabel(point);
-    let totalY = 0;
-    for (let i = 0; i < point.y.length; i++) {
-      totalY += point.y[i];
-    }
-    let title = (
-      '<div style="width:130px">' +
-        totalY + ' ' + this.props.label + '<br/>' +
-        timeLabel +
-      '</div>'
+  renderTooltip = (point, _pointIdx) => {
+    const timeLabel = this.getTimeLabel(point);
+    const totalY = point.y.reduce((a, b) => a + b);
+    return (
+      <React.Fragment>
+        <div style={{width: '130px'}}>
+          <div className="time-label">{timeLabel}</div>
+        </div>
+        {this.props.label && (
+          <div className="value-label">
+            {totalY.toLocaleString()} {this.props.label}
+          </div>
+        )}
+        {point.y.map((y, i) => {
+          const s = this.state.series[i];
+          if (s.label) {
+            return (
+              <div>
+                <span style={{color: s.color}}>{s.label}:</span>{' '}
+                {(y || 0).toLocaleString()}
+              </div>
+            );
+          }
+          return null;
+        })}
+      </React.Fragment>
     );
-    if (point.label) {
-      title += '<div>(' + point.label + ')</div>';
-    }
-    return title;
-  },
+  };
 
-  renderChartColumn(pointIdx, maxval, pointWidth) {
-    let point = this.props.points[pointIdx];
-    let totalY = 0;
-    for (let i = 0; i < point.y.length; i++) {
-      totalY += point.y[i];
-    }
-    let totalPct = totalY / maxval;
+  getMinHeight(index, _pointLength) {
+    const {minHeights} = this.props;
+    return minHeights && (minHeights[index] || minHeights[index] === 0)
+      ? this.props.minHeights[index]
+      : 1;
+  }
+
+  renderChartColumn(point, maxval, pointWidth, index, _totalPoints) {
+    const totalY = point.y.reduce((a, b) => a + b);
+    const totalPct = totalY / maxval;
+    // we leave a little extra space for bars with min-heights.
+    const maxPercentage = 99;
+
     let prevPct = 0;
-    let pts = point.y.map((y, i) => {
-        let pct = totalY && this.floatFormat((y / totalY) * totalPct * 99, 2);
-        let pt = (
-          <span key={i} className={this.props.barClasses[i]}
-                style={{height: pct + '%', bottom: prevPct + '%'}}>{y}</span>
-        );
-        prevPct += pct;
-        return pt;
-     });
+    const pts = point.y.map((y, i) => {
+      const pct = Math.max(
+        totalY && floatFormat((y / totalY) * totalPct * maxPercentage, 2),
+        this.getMinHeight(i, point.y.length)
+      );
+
+      const pt = (
+        <rect
+          key={i}
+          x={index * pointWidth + '%'}
+          y={100.0 - pct - prevPct + '%'}
+          width={pointWidth - this.props.gap + '%'}
+          data-test-id="chart-column"
+          height={pct + '%'}
+          fill={this.state.series[i].color}
+          className={classNames(this.props.barClasses[i], 'barchart-rect')}
+        >
+          {y}
+        </rect>
+      );
+      prevPct += pct;
+      return pt;
+    });
+
+    const pointIdx = point.x;
+    const tooltipFunc = this.props.tooltip || this.renderTooltip;
+
     return (
-      <a key={point.x}
-         className="chart-column tip"
-         data-point-index={pointIdx}
-         style={{width: pointWidth}}
-       >
-       {pts}
-      </a>
+      <Tooltip
+        title={tooltipFunc(this.state.pointIndex[pointIdx], pointIdx, this)}
+        position="bottom"
+        key={point.x}
+      >
+        <g>
+          <rect
+            x={index * pointWidth - this.props.gap + '%'}
+            width={pointWidth + this.props.gap + '%'}
+            height="100%"
+            opacity="0"
+          />
+          {pts}
+        </g>
+      </Tooltip>
     );
-  },
+  }
 
   renderChart() {
-    let points = this.props.points;
-    let pointWidth = this.floatFormat(100.0 / points.length, 2) + '%';
+    const {pointIndex, series} = this.state;
+    const totalPoints = Math.max(...series.map(s => s.data.length));
+    // we expand the graph just a hair beyond 100% prevent a subtle white line on the edge
+    const nudge = 0.1;
+    const pointWidth = floatFormat((100.0 + this.props.gap + nudge) / totalPoints, 2);
 
-    let maxval = this.maxPointValue();
+    const maxval = this.maxPointValue();
+    const markers = this.props.markers.slice();
 
-    let markers = this.props.markers.slice();
+    // group points, then resort
+    const points = Object.keys(pointIndex)
+      .map(k => {
+        const p = pointIndex[k];
+        return {x: p.x, y: p.y};
+      })
+      .sort((a, b) => {
+        return a.x - b.x;
+      });
 
-    let children = [];
-    points.forEach((point, pointIdx) => {
-      while(markers.length && markers[0].x <= point.x) {
-        children.push(this.renderMarker(markers.shift()));
+    markers.sort((a, b) => {
+      return a.x - b.x;
+    });
+
+    const children = [];
+    const markerChildren = [];
+    points.forEach((point, index) => {
+      while (markers.length && markers[0].x <= point.x) {
+        markerChildren.push(this.renderMarker(markers.shift(), index, pointWidth));
       }
 
-      children.push(this.renderChartColumn(pointIdx, maxval, pointWidth));
+      children.push(
+        this.renderChartColumn(point, maxval, pointWidth, index, totalPoints)
+      );
     });
 
     // in bizarre case where markers never got rendered, render them last
     // NOTE: should this ever happen?
-    markers.forEach((marker) => {
-      children.push(this.renderMarker(marker));
+    markers.forEach(marker => {
+      markerChildren.push(this.renderMarker(marker, points.length, pointWidth));
     });
 
-    return children;
-  },
-
-  render() {
-    let figureClass = [this.props.className, 'barchart'].join(' ');
-    let maxval = this.maxPointValue();
-
     return (
-      <figure className={figureClass} height={this.props.height} width={this.props.width}>
-        <span className="max-y">{maxval}</span>
-        <span className="min-y">0</span>
-        <span>{this.renderChart()}</span>
-      </figure>
+      <SvgContainer>
+        <StyledSvg viewBox="0 0 100 400" preserveAspectRatio="none" overflow="visible">
+          {children}
+        </StyledSvg>
+        {markerChildren.length ? markerChildren : null}
+      </SvgContainer>
     );
   }
-});
+
+  render() {
+    const {className, style, height, width} = this.props;
+    const figureClass = [className, 'barchart'].join(' ');
+    const maxval = this.maxPointValue();
+
+    return (
+      <StyledFigure className={figureClass} style={{height, width, ...style}}>
+        <span className="max-y">
+          <Count value={maxval} />
+        </span>
+        <span className="min-y">0</span>
+        {this.renderChart()}
+      </StyledFigure>
+    );
+  }
+}
+
+const StyledSvg = styled('svg')`
+  width: 100%;
+  height: 100%;
+  /* currently, min-heights are not calculated into maximum bar height, so
+  we need the svg to allow elements to exceed the container. This overrides
+  the global overflow: hidden declaration. Eventually, we should factor minimum
+  bar heights into the overall chart height and remove this */
+  overflow: visible !important;
+`;
+
+const StyledFigure = styled('figure')`
+  display: block;
+  position: relative;
+`;
+
+const SvgContainer = styled('div')`
+  position: relative;
+  width: 100%;
+  height: 100%;
+`;
+
+const CircleSvg = styled('svg')`
+  width: ${p => p.size}px;
+  height: ${p => p.size}px;
+  position: absolute;
+  bottom: -${p => p.size / 2}px;
+  transform: translate(${p => (p.offset || 0) - p.size / 2}px, 0);
+  left: ${p => p.left}%;
+
+  &:hover circle {
+    fill: ${p => p.theme.purple};
+  }
+`;
 
 export default StackedBarChart;

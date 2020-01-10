@@ -1,6 +1,15 @@
 from __future__ import absolute_import, print_function
 
-__all__ = ['SourceCache', 'SourceMapCache']
+from six import text_type
+from symbolic import SourceView
+from sentry.utils.strings import codec_lookup
+
+__all__ = ["SourceCache", "SourceMapCache"]
+
+
+def is_utf8(codec):
+    name = codec_lookup(codec).name
+    return name in ("utf-8", "ascii")
 
 
 class SourceCache(object):
@@ -19,24 +28,31 @@ class SourceCache(object):
         return url
 
     def get(self, url):
-        url = self._get_canonical_url(url)
-        return self._cache.get(url)
+        return self._cache.get(self._get_canonical_url(url))
 
     def get_errors(self, url):
         url = self._get_canonical_url(url)
         return self._errors.get(url, [])
 
-    def alias(self, u1, u2):
-        if u1 == u2:
-            return
+    def alias(self, alias, target):
+        if alias != target:
+            self._aliases[alias] = target
 
-        if u1 in self._cache or u1 not in self._aliases:
-            self._aliases[u1] = u1
-        else:
-            self._aliases[u2] = u1
-
-    def add(self, url, source):
+    def add(self, url, source, encoding=None):
         url = self._get_canonical_url(url)
+
+        if not isinstance(source, SourceView):
+            if isinstance(source, text_type):
+                source = source.encode("utf-8")
+            # If an encoding is provided and it's not utf-8 compatible
+            # we try to re-encoding the source and create a source view
+            # from it.
+            elif encoding is not None and not is_utf8(encoding):
+                try:
+                    source = source.decode(encoding).encode("utf-8")
+                except UnicodeError:
+                    pass
+            source = SourceView.from_bytes(source)
         self._cache[url] = source
 
     def add_error(self, url, error):
@@ -56,8 +72,8 @@ class SourceMapCache(object):
     def link(self, url, sourcemap_url):
         self._mapping[url] = sourcemap_url
 
-    def add(self, sourcemap_url, sourcemap_index):
-        self._cache[sourcemap_url] = sourcemap_index
+    def add(self, sourcemap_url, sourcemap_view):
+        self._cache[sourcemap_url] = sourcemap_view
 
     def get(self, sourcemap_url):
         return self._cache.get(sourcemap_url)

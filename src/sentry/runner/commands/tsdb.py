@@ -1,10 +1,11 @@
 from __future__ import absolute_import
 
-from collections import OrderedDict
-from datetime import datetime, timedelta
-
 import click
 import pytz
+import six
+
+from collections import OrderedDict
+from datetime import datetime, timedelta
 from dateutil.parser import parse
 
 from sentry.runner.decorators import configuration
@@ -12,7 +13,7 @@ from sentry.utils.iterators import chunked
 
 
 class DateTimeParamType(click.ParamType):
-    name = 'datetime'
+    name = "datetime"
 
     def convert(self, context, option, value):
         if value is None:
@@ -23,11 +24,7 @@ class DateTimeParamType(click.ParamType):
         try:
             result = parse(value)
         except Exception:
-            self.fail(
-                '{!r} is not a valid datetime'.format(value),
-                option,
-                context,
-            )
+            self.fail(u"{!r} is not a valid datetime".format(value), option, context)
 
         if result.tzinfo is None:
             # TODO: We should probably warn about this? Also note that this
@@ -52,16 +49,18 @@ def query():
 
 @query.command()
 @click.argument(
-    'metrics',
+    "metrics",
     nargs=-1,
-    type=click.Choice([
-        'organization_total_received',
-        'organization_total_rejected',
-        'organization_total_blacklisted',
-    ]),
+    type=click.Choice(
+        [
+            "organization_total_received",
+            "organization_total_rejected",
+            "organization_total_blacklisted",
+        ]
+    ),
 )
-@click.option('--since', callback=DateTimeParamType())
-@click.option('--until', callback=DateTimeParamType())
+@click.option("--since", callback=DateTimeParamType())
+@click.option("--until", callback=DateTimeParamType())
 @configuration
 def organizations(metrics, since, until):
     """
@@ -71,9 +70,11 @@ def organizations(metrics, since, until):
     from sentry.app import tsdb
     from sentry.models import Organization
 
-    stdout = click.get_text_stream('stdout')
-    stderr = click.get_text_stream('stderr')
-    aggregate = lambda series: sum(value for timestamp, value in series)
+    stdout = click.get_text_stream("stdout")
+    stderr = click.get_text_stream("stderr")
+
+    def aggregate(series):
+        return sum(value for timestamp, value in series)
 
     metrics = OrderedDict((name, getattr(tsdb.models, name)) for name in metrics)
     if not metrics:
@@ -86,15 +87,9 @@ def organizations(metrics, since, until):
         since = until - timedelta(minutes=60)
 
     if until < since:
-        raise click.ClickException('invalid time range provided: {} to {}'.format(since, until))
+        raise click.ClickException(u"invalid time range provided: {} to {}".format(since, until))
 
-    stderr.write(
-        'Dumping {} from {} to {}...\n'.format(
-            ', '.join(metrics.keys()),
-            since,
-            until,
-        ),
-    )
+    stderr.write(u"Dumping {} from {} to {}...\n".format(", ".join(metrics.keys()), since, until))
 
     objects = Organization.objects.all()
 
@@ -105,15 +100,13 @@ def organizations(metrics, since, until):
         for metric in metrics.values():
             results[metric] = tsdb.get_range(metric, instances.keys(), since, until)
 
-        for key, instance in instances.iteritems():
+        for key, instance in six.iteritems(instances):
             values = []
             for metric in metrics.values():
                 values.append(aggregate(results[metric][key]))
 
             stdout.write(
-                '{} {} {}\n'.format(
-                    instance.id,
-                    instance.slug,
-                    ' '.join(map(str, values)),
-                ),
+                u"{} {} {}\n".format(
+                    instance.id, instance.slug, " ".join(map(six.binary_type, values))
+                )
             )

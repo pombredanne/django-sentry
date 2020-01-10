@@ -1,90 +1,72 @@
 import React from 'react';
-import ReactDOMServer from 'react-dom/server';
+import {mount} from 'sentry-test/enzyme';
 
-import TestUtils from 'react-addons-test-utils';
-
-import {Client} from 'app/api';
-import TagDistributionMeter from 'app/components/group/tagDistributionMeter';
+import GroupTagDistributionMeter from 'app/components/group/tagDistributionMeter';
 
 describe('TagDistributionMeter', function() {
+  let element;
+  let emptyElement;
+  let organization;
+  const tags = TestStubs.Tags();
 
   beforeEach(function() {
-    this.sandbox = sinon.sandbox.create();
+    organization = TestStubs.Organization();
 
-    this.stubbedApiRequest = this.sandbox.stub(Client.prototype, 'request');
+    element = mount(
+      <GroupTagDistributionMeter
+        key="element"
+        tag="browser"
+        group={{id: '1337'}}
+        organization={organization}
+        projectId="456"
+        totalValues={tags[0].totalValues}
+        topValues={tags[0].topValues}
+      />
+    );
 
-    this.element = TestUtils.renderIntoDocument(
-      <TagDistributionMeter tag="browser" group={{id:'1337'}} orgId="123" projectId="456"/>
+    emptyElement = mount(
+      <GroupTagDistributionMeter
+        key="emptyElement"
+        tag="browser"
+        group={{id: '1337'}}
+        organization={organization}
+        projectId="456"
+        totalValues={0}
+      />
     );
   });
 
-  afterEach(function() {
-    this.sandbox.restore();
-  });
-
-  describe('fetchData()', function() {
-    it('should make a request to the groups/tags endpoint', function () {
-      // NOTE: creation of OrganizationTeams causes a bunch of API requests to fire ...
-      //       reset the request stub so that we can get an accurate count
-      this.stubbedApiRequest.reset();
-
-      this.element.fetchData();
-
-      expect(this.stubbedApiRequest.callCount).to.equal(1);
-      expect(this.stubbedApiRequest.getCall(0).args[0]).to.equal('/issues/1337/tags/browser/');
-    });
-  });
-
-  describe('renderBody()', function () {
-    it('should return null if loading', function (done) {
-      this.element.setState({
+  describe('renderBody()', function() {
+    it('should return null if loading', function() {
+      element.setState({
         loading: true,
-        error: false
-      }, () => {
-        expect(this.element.renderBody()).to.be.null;
-        done();
+        error: false,
       });
+      element.update();
+      expect(element.find('Segment')).toHaveLength(0);
     });
 
-    it('should return null if in an error state', function (done) {
-      this.element.setState({
+    it('should return null if in an error state', function() {
+      element.setState({
         error: true,
-        loading: false
-      }, () => {
-        expect(this.element.renderBody()).to.be.null;
-        done();
+        loading: false,
       });
+      element.update();
+      expect(element.find('Segment')).toHaveLength(0);
     });
 
-    it('should return "no recent data" if no total values present', function (done) {
-      this.element.setState({
+    it('should return "no recent data" if no total values present', function() {
+      emptyElement.setState({
         error: false,
         loading: false,
-        data: {
-          totalValues: 0
-        }
-      }, () => {
-        let out = this.element.renderBody();
-        expect(ReactDOMServer.renderToStaticMarkup(out)).to.eql('<p>No recent data.</p>');
-        done();
       });
+      emptyElement.update();
+      expect(emptyElement.find('p').text()).toEqual('No recent data.');
     });
 
-    it('should call renderSegments() if values present', function (done) {
-      this.sandbox.stub(this.element, 'renderSegments');
-
-      this.element.setState({
-        error: false,
-        loading: false,
-        data: {
-          totalValues: 100
-        }
-      }, () => {
-        this.element.renderBody();
-        expect(this.element.renderSegments.calledOnce);
-        done();
-      });
+    it('should call renderSegments() if values present', function() {
+      element.setState({loading: false, error: false});
+      expect(element.find('Segment').length).toEqual(3);
     });
   });
 });
-

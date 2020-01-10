@@ -1,29 +1,24 @@
-"""
-sentry.utils.imports
-~~~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
 from __future__ import absolute_import
 
 import pkgutil
+import six
 
 
 class ModuleProxyCache(dict):
     def __missing__(self, key):
-        if '.' not in key:
+        if "." not in key:
             return __import__(key)
 
-        module_name, class_name = key.rsplit('.', 1)
+        module_name, class_name = key.rsplit(".", 1)
 
-        module = __import__(module_name, {}, {}, [class_name], -1)
+        module = __import__(module_name, {}, {}, [class_name])
         handler = getattr(module, class_name)
 
         # We cache a NoneType for missing imports to avoid repeated lookups
         self[key] = handler
 
         return handler
+
 
 _cache = ModuleProxyCache()
 
@@ -44,9 +39,11 @@ def import_submodules(context, root_module, path):
 
     >>> import_submodules(locals(), __name__, __path__)
     """
-    for loader, module_name, is_pkg in pkgutil.walk_packages(path, root_module + '.'):
-        module = loader.find_module(module_name).load_module(module_name)
-        for k, v in vars(module).iteritems():
-            if not k.startswith('_'):
+    for loader, module_name, is_pkg in pkgutil.walk_packages(path, root_module + "."):
+        # this causes a Runtime error with model conflicts
+        # module = loader.find_module(module_name).load_module(module_name)
+        module = __import__(module_name, globals(), locals(), ["__name__"])
+        for k, v in six.iteritems(vars(module)):
+            if not k.startswith("_"):
                 context[k] = v
         context[module_name] = module

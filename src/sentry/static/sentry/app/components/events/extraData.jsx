@@ -1,36 +1,51 @@
 import React from 'react';
 
-import PropTypes from '../../proptypes';
-import {objectToArray} from '../../utils';
-import EventDataSection from './eventDataSection';
-import KeyValueList from './interfaces/keyValueList';
-import {t} from '../../locale';
+import {t} from 'app/locale';
+import ErrorBoundary from 'app/components/errorBoundary';
+import EventDataSection from 'app/components/events/eventDataSection';
+import KeyValueList from 'app/components/events/interfaces/keyValueList';
+import SentryTypes from 'app/sentryTypes';
 
-const EventExtraData = React.createClass({
-  propTypes: {
-    group: PropTypes.Group.isRequired,
-    event: PropTypes.Event.isRequired
-  },
+class EventExtraData extends React.Component {
+  static propTypes = {
+    event: SentryTypes.Event.isRequired,
+  };
+
+  constructor(...args) {
+    super(...args);
+    this.state = {
+      raw: false,
+    };
+  }
 
   shouldComponentUpdate(nextProps, nextState) {
-    return this.props.event.id !== nextProps.event.id;
-  },
+    return this.props.event.id !== nextProps.event.id || this.state.raw !== nextState.raw;
+  }
+
+  toggleRaw = shouldBeRaw => {
+    this.setState({
+      raw: shouldBeRaw,
+    });
+  };
 
   render() {
-    let extraDataArray = objectToArray(this.props.event.context);
-
+    const extraDataArray = Object.entries(this.props.event.context);
     return (
-      <EventDataSection
-          group={this.props.group}
+      <div className="extra-data">
+        <EventDataSection
           event={this.props.event}
           type="extra"
-          title={t('Additional Data')}>
-          <KeyValueList
-              data={extraDataArray}
-              isContextData={true}/>
-      </EventDataSection>
+          title={t('Additional Data')}
+          toggleRaw={this.toggleRaw}
+          raw={this.state.raw}
+        >
+          <ErrorBoundary mini>
+            <KeyValueList data={extraDataArray} isContextData raw={this.state.raw} />
+          </ErrorBoundary>
+        </EventDataSection>
+      </div>
     );
   }
-});
+}
 
 export default EventExtraData;

@@ -1,74 +1,49 @@
-import jQuery from 'jquery';
+// These imports (core-js and regenerator-runtime) are replacements for deprecated `@babel/polyfill`
+import 'core-js/stable';
+import 'regenerator-runtime/runtime';
 
-// setup jquery for CSRF tokens
-function getCookie(name) {
-  let cookieValue = null;
-  if (document.cookie && document.cookie !== '') {
-    let cookies = document.cookie.split(';');
-    for (let i = 0; i < cookies.length; i++) {
-      let cookie = jQuery.trim(cookies[i]);
-      // Does this cookie string begin with the name we want?
-      if (cookie.substring(0, name.length + 1) == (name + '=')) {
-        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-        break;
-      }
-    }
-  }
-  return cookieValue;
-}
+const BOOTSTRAP_URL = '/api/client-config/';
 
-function csrfSafeMethod(method) {
-  // these HTTP methods do not require CSRF protection
-  return (/^(GET|HEAD|OPTIONS|TRACE)$/.test(method));
-}
-jQuery.ajaxSetup({
-  beforeSend: function(xhr, settings) {
-    if (!csrfSafeMethod(settings.type) && !this.crossDomain) {
-      xhr.setRequestHeader('X-CSRFToken', getCookie('csrf'));
-    }
-  }
-});
+const bootApplication = data => {
+  const {distPrefix, csrfCookieName, sentryConfig, userIdentity} = data;
 
-// these get exported to a global variable, which is important as its the only
-// way we can call into scoped objects
-export default {
-  jQuery: jQuery,
-  moment: require('moment'),
-  Raven: require('raven-js'),
-  React: require('react'),
-  ReactDOM: require('react-dom'),
-  Router: require('react-router'),
+  // TODO(epurkhiser): Would be great if we could remove some of these from
+  // existing on the window object and instead pass into a bootstrap function.
+  // We can't currently do this due to some of these globals needing to be
+  // available for modules imported by the bootstrap.
+  window.csrfCookieName = csrfCookieName;
+  window.__sentryGlobalStaticPrefix = distPrefix;
+  window.__SENTRY__OPTIONS = sentryConfig;
+  window.__SENTRY__USER = userIdentity;
+  window.__initialData = data;
 
-  Sentry: {
-    api: require('./api'),
-    routes: require('./routes'),
-    createHistory: require('history/lib/createBrowserHistory'),
-    Alerts: require('./components/alerts'),
-    AlertActions: require('./actions/alertActions'),
-    AvatarSettings: require('./components/avatarSettings'),
-    mixins: {
-      ApiMixin: require('./mixins/apiMixin'),
-    },
-    BarChart: require('./components/barChart'),
-    i18n: require('./locale'),
-    ConfigStore: require('./stores/configStore'),
-    Count: require('./components/count'),
-    DateTime: require('./components/dateTime'),
-    DropdownLink: require('./components/dropdownLink'),
-    FlotChart: require('./components/flotChart'),
-    HookStore: require('./stores/hookStore'),
-    Indicators: require('./components/indicators'),
-    LoadingError: require('./components/loadingError'),
-    LoadingIndicator: require('./components/loadingIndicator'),
-    ListLink: require('./components/listLink'),
-    MenuItem: require('./components/menuItem'),
-    Pagination: require('./components/pagination'),
-    ProjectSelector: require('./components/projectHeader/projectSelector'),
-    RuleEditor: require('./views/ruleEditor'),
-    StackedBarChart: require('./components/stackedBarChart'),
-    TimeSince: require('./components/timeSince'),
-    TodoList: require('./components/todos'),
-    U2fEnrollment: require('./components/u2fenrollment'),
-    U2fSign: require('./components/u2fsign')
-  }
+  // Once data hydration is done we can initialize the app
+  require('./bootstrap');
 };
+
+async function bootWithHydration() {
+  const response = await fetch(BOOTSTRAP_URL);
+  const data = await response.json();
+
+  // XXX(epurkhiser): Currently we only boot with hydration in experimental SPA
+  // mode, where assets are *currently not versioned*. We hardcode this here
+  // for now as a quick workaround for the index.html being aware of versioned
+  // asset paths.
+  data.distPrefix = '/_assets/';
+
+  bootApplication(data);
+
+  // TODO(epurkhiser): This should live somewhere else
+  $(window.SentryRenderApp);
+}
+
+const bootstrapData = window.__initialData;
+
+// If __initialData is not already set on the window, we are likely running in
+// pure SPA mode, meaning django is not serving our frontend application and we
+// need to make an API request to hydrate the bootstrap data to boot the app.
+if (bootstrapData === undefined) {
+  bootWithHydration();
+} else {
+  bootApplication(bootstrapData);
+}

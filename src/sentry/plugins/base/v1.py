@@ -1,27 +1,22 @@
-"""
-sentry.plugins.base.v1
-~~~~~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
 from __future__ import absolute_import, print_function
 
-__all__ = ('Plugin',)
+__all__ = ("Plugin",)
 
 import logging
+import six
 
 from django.core.urlresolvers import reverse
 from django.http import HttpResponseRedirect
 from threading import local
-from hashlib import md5
 
 from sentry.auth import access
+from sentry.plugins import HIDDEN_PLUGINS
+from sentry.plugins.config import PluginConfigMixin
+from sentry.plugins.status import PluginStatusMixin
 from sentry.plugins.base.response import Response
 from sentry.plugins.base.view import PluggableViewMixin
-from sentry.plugins.base.configuration import (
-    default_plugin_config, default_plugin_options,
-)
+from sentry.plugins.base.configuration import default_plugin_config, default_plugin_options
+from sentry.utils.hashlib import md5_text
 
 
 class PluginMount(type):
@@ -32,13 +27,15 @@ class PluginMount(type):
         if new_cls.title is None:
             new_cls.title = new_cls.__name__
         if not new_cls.slug:
-            new_cls.slug = new_cls.title.replace(' ', '-').lower()
-        if not hasattr(new_cls, 'logger'):
-            new_cls.logger = logging.getLogger('sentry.plugins.%s' % (new_cls.slug,))
+            new_cls.slug = new_cls.title.replace(" ", "-").lower()
+        if not hasattr(new_cls, "logger") or new_cls.logger in [
+            getattr(b, "logger", None) for b in bases
+        ]:
+            new_cls.logger = logging.getLogger("sentry.plugins.%s" % (new_cls.slug,))
         return new_cls
 
 
-class IPlugin(local, PluggableViewMixin):
+class IPlugin(local, PluggableViewMixin, PluginConfigMixin, PluginStatusMixin):
     """
     Plugin interface. Should not be inherited from directly.
 
@@ -55,6 +52,7 @@ class IPlugin(local, PluggableViewMixin):
 
     All children should allow ``**kwargs`` on all inherited methods.
     """
+
     # Generic plugin information
     title = None
     slug = None
@@ -69,10 +67,10 @@ class IPlugin(local, PluggableViewMixin):
     conf_title = None
 
     project_conf_form = None
-    project_conf_template = 'sentry/plugins/project_configuration.html'
+    project_conf_template = "sentry/plugins/project_configuration.html"
 
     site_conf_form = None
-    site_conf_template = 'sentry/plugins/site_configuration.html'
+    site_conf_template = "sentry/plugins/site_configuration.html"
 
     # Global enabled state
     enabled = True
@@ -82,7 +80,10 @@ class IPlugin(local, PluggableViewMixin):
     project_default_enabled = False
 
     def _get_option_key(self, key):
-        return '%s:%s' % (self.get_conf_key(), key)
+        return "%s:%s" % (self.get_conf_key(), key)
+
+    def get_plugin_type(self):
+        return "default"
 
     def is_enabled(self, project=None):
         """
@@ -100,7 +101,7 @@ class IPlugin(local, PluggableViewMixin):
             return True
 
         if project:
-            project_enabled = self.get_option('enabled', project)
+            project_enabled = self.get_option("enabled", project)
             if project_enabled is not None:
                 return project_enabled
             else:
@@ -110,6 +111,7 @@ class IPlugin(local, PluggableViewMixin):
 
     def reset_options(self, project=None, user=None):
         from sentry.plugins.helpers import reset_options
+
         return reset_options(self.get_conf_key(), project, user)
 
     def get_option(self, key, project=None, user=None):
@@ -122,6 +124,7 @@ class IPlugin(local, PluggableViewMixin):
         >>> value = plugin.get_option('my_option')
         """
         from sentry.plugins.helpers import get_option
+
         return get_option(self._get_option_key(key), project, user)
 
     def set_option(self, key, value, project=None, user=None):
@@ -133,6 +136,7 @@ class IPlugin(local, PluggableViewMixin):
         >>> plugin.set_option('my_option', 'http://example.com')
         """
         from sentry.plugins.helpers import set_option
+
         return set_option(self._get_option_key(key), value, project, user)
 
     def unset_option(self, key, project=None, user=None):
@@ -144,15 +148,16 @@ class IPlugin(local, PluggableViewMixin):
         >>> plugin.unset_option('my_option')
         """
         from sentry.plugins.helpers import unset_option
+
         return unset_option(self._get_option_key(key), project, user)
 
     def enable(self, project=None, user=None):
         """Enable the plugin."""
-        self.set_option('enabled', True, project, user)
+        self.set_option("enabled", True, project, user)
 
     def disable(self, project=None, user=None):
         """Disable the plugin."""
-        self.set_option('enabled', False, project, user)
+        self.set_option("enabled", False, project, user)
 
     def get_url(self, group):
         """
@@ -160,14 +165,17 @@ class IPlugin(local, PluggableViewMixin):
 
         >>> plugin.get_url(group)
         """
-        return reverse('sentry-group-plugin-action', args=(group.organization.slug, group.project.slug, group.pk, self.slug))
+        return reverse(
+            "sentry-group-plugin-action",
+            args=(group.organization.slug, group.project.slug, group.pk, self.slug),
+        )
 
     def get_conf_key(self):
         """
         Returns a string representing the configuration keyspace prefix for this plugin.
         """
         if not self.conf_key:
-            return self.get_conf_title().lower().replace(' ', '_')
+            return self.get_conf_title().lower().replace(" ", "_")
         return self.conf_key
 
     def get_conf_form(self, project=None):
@@ -207,9 +215,9 @@ class IPlugin(local, PluggableViewMixin):
         >>> plugin.get_conf_version(project)
         """
         options = self.get_conf_options(project)
-        return md5(
-            '&'.join(sorted('%s=%s' % o for o in options.iteritems()))
-        ).hexdigest()[:3]
+        return md5_text("&".join(sorted("%s=%s" % o for o in six.iteritems(options)))).hexdigest()[
+            :3
+        ]
 
     def get_conf_title(self):
         """
@@ -222,6 +230,12 @@ class IPlugin(local, PluggableViewMixin):
 
     def has_project_conf(self):
         return self.project_conf_form is not None
+
+    def has_plugin_conf(self):
+        """
+        Checks if the plugin should be returned in the ProjectPluginsEndpoint
+        """
+        return self.has_project_conf()
 
     def can_enable_for_projects(self):
         """
@@ -242,7 +256,7 @@ class IPlugin(local, PluggableViewMixin):
         if not self.can_enable_for_projects():
             return False
 
-        if not features.has('projects:plugins', project, self, actor=None):
+        if not features.has("projects:plugins", project, self, actor=None):
             return False
 
         if not self.can_disable:
@@ -263,6 +277,8 @@ class IPlugin(local, PluggableViewMixin):
         """
         return self.title
 
+    get_short_title = get_title
+
     def get_description(self):
         """
         Returns the description for this plugin. This is shown on the plugin configuration
@@ -278,7 +294,7 @@ class IPlugin(local, PluggableViewMixin):
 
         >>> def get_resource_links(self):
         >>>     return [
-        >>>         ('Documentation', 'https://docs.getsentry.com'),
+        >>>         ('Documentation', 'https://docs.sentry.io'),
         >>>         ('Bug Tracker', 'https://github.com/getsentry/sentry/issues'),
         >>>         ('Source', 'https://github.com/getsentry/sentry'),
         >>>     ]
@@ -286,8 +302,6 @@ class IPlugin(local, PluggableViewMixin):
         return self.resource_links
 
     def get_view_response(self, request, group):
-        from sentry.models import Event
-
         self.selected = request.path == self.get_url(group)
 
         if not self.selected:
@@ -302,21 +316,25 @@ class IPlugin(local, PluggableViewMixin):
             return response
 
         if not isinstance(response, Response):
-            raise NotImplementedError('Use self.render() when returning responses.')
+            raise NotImplementedError("Use self.render() when returning responses.")
 
-        event = group.get_latest_event() or Event()
-        event.group = group
+        event = group.get_latest_event()
+        if event:
+            event.group = group
 
         request.access = access.from_request(request, group.organization)
 
-        return response.respond(request, {
-            'plugin': self,
-            'project': group.project,
-            'group': group,
-            'event': event,
-            'can_admin_event': request.access.has_scope('event:write'),
-            'can_remove_event': request.access.has_scope('event:delete'),
-        })
+        return response.respond(
+            request,
+            {
+                "plugin": self,
+                "project": group.project,
+                "group": group,
+                "event": event,
+                "can_admin_event": request.access.has_scope("event:write"),
+                "can_remove_event": request.access.has_scope("event:admin"),
+            },
+        )
 
     def view(self, request, group, **kwargs):
         """
@@ -422,18 +440,17 @@ class IPlugin(local, PluggableViewMixin):
         >>> def is_regression(self, group, event, **kwargs):
         >>>     # regression if 'version' tag has a value we haven't seen before
         >>>     seen_versions = set(t[0] for t in group.get_unique_tags("version"))
-        >>>     event_version = dict(event.get_tags()).get("version")
+        >>>     event_version = dict(event.tags).get("version")
         >>>     return event_version not in seen_versions
         """
 
-    def post_process(self, group, event, is_new, is_sample, **kwargs):
+    def post_process(self, group, event, is_new, **kwargs):
         """
         Post processes an event after it has been saved.
 
         :param group: an instance of ``Group``
         :param event: an instance of ``Event``
         :param is_new: a boolean describing if this group is new, or has changed state
-        :param is_sample: a boolean describing if this event was stored, or sampled
 
         >>> def post_process(self, event, **kwargs):
         >>>     print 'New event created:', event.id
@@ -465,7 +482,15 @@ class IPlugin(local, PluggableViewMixin):
         """
         Returns True if this plugin is able to be tested.
         """
-        return hasattr(self, 'test_configuration')
+        return hasattr(self, "test_configuration")
+
+    def is_hidden(self):
+        """
+        Should this plugin be hidden in the UI
+
+        We use this to hide plugins as they are replaced with integrations.
+        """
+        return self.slug in HIDDEN_PLUGINS
 
     def configure(self, request, project=None):
         """Configures the plugin."""
@@ -474,12 +499,28 @@ class IPlugin(local, PluggableViewMixin):
     def get_url_module(self):
         """Allows a plugin to return the import path to a URL module."""
 
+    def view_configure(self, request, project, **kwargs):
+        if request.method == "GET":
+            return Response(
+                self.get_configure_plugin_fields(
+                    request=request,  # DEPRECATED: this param should not be used
+                    project=project,
+                    **kwargs
+                )
+            )
+        self.configure(project, request.data)
+        return Response({"message": "Successfully updated configuration."})
 
+    def handle_signal(self, name, payload, **kwargs):
+        pass
+
+
+@six.add_metaclass(PluginMount)
 class Plugin(IPlugin):
     """
     A plugin should be treated as if it were a singleton. The owner does not
     control when or how the plugin gets instantiated, nor is it guaranteed that
     it will happen, or happen more than once.
     """
+
     __version__ = 1
-    __metaclass__ = PluginMount

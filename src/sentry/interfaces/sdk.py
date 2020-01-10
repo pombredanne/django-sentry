@@ -1,9 +1,9 @@
 from __future__ import absolute_import
 
-__all__ = ('Sdk',)
+__all__ = ("Sdk",)
 
-from sentry.interfaces.base import Interface, InterfaceValidationError
-from sentry.utils.safe import trim
+from sentry.interfaces.base import Interface
+from sentry.utils.json import prune_empty_keys
 
 
 class Sdk(Interface):
@@ -11,25 +11,37 @@ class Sdk(Interface):
     The SDK used to transmit this event.
 
     >>> {
-    >>>     "name": "sentry-unity",
-    >>>     "version": "1.0"
+    >>>     "name": "sentry.java",
+    >>>     "version": "1.7.10",
+    >>>     "integrations": ["log4j"],
+    >>>     "packages": [
+    >>>         {
+    >>>             "name": "maven:io.sentry.sentry",
+    >>>             "version": "1.7.10",
+    >>>         }
+    >>>     ]
     >>> }
     """
+
     @classmethod
     def to_python(cls, data):
-        name = data.get('name')
-        if not name:
-            raise InterfaceValidationError("No 'name' value")
+        for key in ("name", "version", "integrations", "packages"):
+            data.setdefault(key, None)
 
-        version = data.get('version')
-        if not version:
-            raise InterfaceValidationError("No 'version' value")
+        return cls(**data)
 
-        kwargs = {
-            'name': trim(name, 128),
-            'version': trim(version, 128),
-        }
-        return cls(**kwargs)
+    def to_json(self):
+        return prune_empty_keys(
+            {
+                "name": self.name,
+                "version": self.version,
+                "integrations": self.integrations or None,
+                "packages": self.packages or None,
+            }
+        )
 
-    def get_path(self):
-        return 'sdk'
+    def get_api_context(self, is_public=False, platform=None):
+        return {"name": self.name, "version": self.version}
+
+    def get_api_meta(self, meta, is_public=False, platform=None):
+        return {"": meta.get(""), "name": meta.get("name"), "version": meta.get("version")}

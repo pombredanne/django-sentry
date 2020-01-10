@@ -1,108 +1,116 @@
+import PropTypes from 'prop-types';
 import React from 'react';
 
-import ClippedBox from '../../clippedBox';
-import KeyValueList from './keyValueList';
-import ContextData from '../../contextData';
+import {objectIsEmpty} from 'app/utils';
+import {objectToSortedTupleArray} from 'app/components/events/interfaces/utils';
+import {t} from 'app/locale';
+import ClippedBox from 'app/components/clippedBox';
+import ContextData from 'app/components/contextData';
+import ErrorBoundary from 'app/components/errorBoundary';
+import KeyValueList from 'app/components/events/interfaces/keyValueList';
+import AnnotatedText from 'app/components/events/meta/annotatedText';
+import MetaData from 'app/components/events/meta/metaData';
 
-import {objectIsEmpty} from '../../../utils';
-import queryString from 'query-string';
-import {t} from '../../../locale';
+class RichHttpContent extends React.Component {
+  static propTypes = {
+    data: PropTypes.object.isRequired,
+  };
 
-const RichHttpContent = React.createClass({
-  propTypes: {
-    data: React.PropTypes.object.isRequired
-  },
-
-  /**
-   * Converts an object of body/querystring key/value pairs
-   * into a tuple of [key, value] pairs, and sorts them.
-   *
-   * Note that the query-string parser returns dupes like this:
-   *   { foo: ['bar', 'baz'] } // ?foo=bar&bar=baz
-   *
-   * This method accounts for this.
-   */
-  objectToSortedTupleArray(obj) {
-    return Object.keys(obj).reduce((out, k) => {
-      let val = obj[k];
-      return out.concat(
-        {}.toString.call(val) === '[object Array]' ?
-          val.map(v => [k, v]) : // key has multiple values (array)
-          [[k, val]]             // key has single value
+  getBodySection = (data, value, meta) => {
+    // The http interface provides an inferred content type for the data body.
+    if (meta && (!value || value instanceof String)) {
+      // TODO(markus): Currently annotated nested objects are shown without
+      // annotations.
+      return (
+        <pre>
+          <AnnotatedText
+            value={value}
+            chunks={meta.chunks}
+            remarks={meta.rem}
+            errors={meta.err}
+          />
+        </pre>
       );
-    }, []).sort(function ([keyA], [keyB]) {
-      return keyA < keyB ? -1 : 1;
-    });
-  },
-
-  getBodySection(data) {
-    /*eslint no-empty:0*/
-    let contentType = data.headers.find(h => h[0] === 'Content-Type');
-    contentType = contentType && contentType[1].split(';')[0].toLowerCase();
-
-    // Ignoring Content-Type, we immediately just check if the body is parseable
-    // as JSON. Why? Because many applications don't set proper Content-Type values,
-    // e.g. x-www-form-urlencoded  actually contains JSON.
-    try {
-      return <ContextData data={JSON.parse(data.data)} />;
-    } catch (e) {}
-
-    if (contentType === 'application/x-www-form-urlencoded') {
-      return this.getQueryStringOrRaw(data.data);
+    } else if (value) {
+      switch (data.inferredContentType) {
+        case 'application/json':
+          return <ContextData data={value} preserveQuotes />;
+        case 'application/x-www-form-urlencoded':
+        case 'multipart/form-data':
+          return <KeyValueList data={objectToSortedTupleArray(value)} isContextData />;
+        default:
+          return <pre>{JSON.stringify(value, null, 2)}</pre>;
+      }
     } else {
-      return <pre>{data.data}</pre>;
+      return null;
     }
-  },
+  };
 
-  getQueryStringOrRaw(data) {
+  getQueryStringOrRaw = data => {
     try {
       // Sentry API abbreviates long query string values, sometimes resulting in
       // an un-parsable querystring ... stay safe kids
-      return <KeyValueList data={this.objectToSortedTupleArray(queryString.parse(data))}/>;
+      return <KeyValueList data={data} isContextData />;
     } catch (e) {
       return <pre>{data}</pre>;
     }
-  },
+  };
 
-  render(){
-    let data = this.props.data;
+  render() {
+    const data = this.props.data;
     return (
       <div>
-        {data.query &&
+        {!objectIsEmpty(data.query) && (
           <ClippedBox title={t('Query String')}>
-            {this.getQueryStringOrRaw(data.query)}
+            <ErrorBoundary mini>{this.getQueryStringOrRaw(data.query)}</ErrorBoundary>
           </ClippedBox>
-        }
-        {data.fragment &&
+        )}
+        {data.fragment && (
           <ClippedBox title={t('Fragment')}>
-            <pre>{data.fragment}</pre>
+            <ErrorBoundary mini>
+              <pre>{data.fragment}</pre>
+            </ErrorBoundary>
           </ClippedBox>
-        }
+        )}
 
-        {data.data &&
-          <ClippedBox title={t('Body')}>
-            {this.getBodySection(data)}
-          </ClippedBox>
-        }
+        <MetaData object={data} prop="data">
+          {(value, meta) => {
+            if (value || meta) {
+              return (
+                <ClippedBox title={t('Body')}>
+                  {this.getBodySection(data, value, meta)}
+                </ClippedBox>
+              );
+            }
 
-        {data.cookies && !objectIsEmpty(data.cookies) &&
+            return null;
+          }}
+        </MetaData>
+
+        {data.cookies && !objectIsEmpty(data.cookies) && (
           <ClippedBox title={t('Cookies')} defaultCollapsed>
-            <KeyValueList data={data.cookies} />
+            <ErrorBoundary mini>
+              <KeyValueList data={data.cookies} />
+            </ErrorBoundary>
           </ClippedBox>
-        }
-        {!objectIsEmpty(data.headers) &&
+        )}
+        {!objectIsEmpty(data.headers) && (
           <ClippedBox title={t('Headers')}>
-            <KeyValueList data={data.headers} />
+            <ErrorBoundary mini>
+              <KeyValueList data={data.headers} />
+            </ErrorBoundary>
           </ClippedBox>
-        }
-        {!objectIsEmpty(data.env) &&
+        )}
+        {!objectIsEmpty(data.env) && (
           <ClippedBox title={t('Environment')} defaultCollapsed>
-            <KeyValueList data={this.objectToSortedTupleArray(data.env)}/>
+            <ErrorBoundary mini>
+              <KeyValueList data={objectToSortedTupleArray(data.env)} />
+            </ErrorBoundary>
           </ClippedBox>
-        }
+        )}
       </div>
     );
   }
-});
+}
 
 export default RichHttpContent;

@@ -1,11 +1,13 @@
 from __future__ import absolute_import
 
+import six
+
 from collections import OrderedDict
 
 
 class Role(object):
-    def __init__(self, priority, id, name, desc='', scopes=(), is_global=False):
-        assert len(id) <= 32, 'Role id must be no more than 32 characters'
+    def __init__(self, priority, id, name, desc="", scopes=(), is_global=False):
+        assert len(id) <= 32, "Role id must be no more than 32 characters"
 
         self.priority = priority
         self.id = id
@@ -15,13 +17,13 @@ class Role(object):
         self.is_global = bool(is_global)
 
     def __str__(self):
-        return self.name.encode('utf-8')
+        return self.name.encode("utf-8")
 
     def __unicode__(self):
-        return unicode(self.name)
+        return six.text_type(self.name)
 
     def __repr__(self):
-        return '<Role: {}>'.format(self.id)
+        return u"<Role: {}>".format(self.id)
 
     def has_scope(self, scope):
         return scope in self.scopes
@@ -36,10 +38,7 @@ class RoleManager(object):
             role_list.append(role)
             self._roles[role.id] = role
 
-        self._choices = tuple(
-            (r.id, r.name)
-            for r in role_list
-        )
+        self._choices = tuple((r.id, r.name) for r in role_list)
 
         if default:
             self._default = self._roles[default]
@@ -49,7 +48,7 @@ class RoleManager(object):
         self._top_dog = role_list[-1]
 
     def __iter__(self):
-        return self._roles.itervalues()
+        return six.itervalues(self._roles)
 
     def can_manage(self, role, other):
         return self.get(role).priority >= self.get(other).priority
@@ -72,4 +71,9 @@ class RoleManager(object):
     def with_scope(self, scope):
         for role in self.get_all():
             if role.has_scope(scope):
+                yield role
+
+    def with_any_scope(self, scopes):
+        for role in self.get_all():
+            if any(role.has_scope(scope) for scope in scopes):
                 yield role

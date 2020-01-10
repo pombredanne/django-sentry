@@ -1,6 +1,6 @@
 from __future__ import absolute_import
 
-__all__ = ['DatadogMetricsBackend']
+__all__ = ["DatadogMetricsBackend"]
 
 from datadog import initialize, ThreadStats
 from datadog.util.hostname import get_hostname
@@ -10,19 +10,12 @@ from sentry.utils.cache import memoize
 from .base import MetricsBackend
 
 
-# XXX(dcramer): copied from sentry.utils.metrics
-def _sampled_value(value, sample_rate):
-    if sample_rate < 1:
-        value = int(value * (1.0 / sample_rate))
-    return value
-
-
 class DatadogMetricsBackend(MetricsBackend):
     def __init__(self, prefix=None, **kwargs):
         # TODO(dcramer): it'd be nice if the initialize call wasn't a global
-        self.tags = kwargs.pop('tags', None)
-        if 'host' in kwargs:
-            self.host = kwargs.pop('host')
+        self.tags = kwargs.pop("tags", None)
+        if "host" in kwargs:
+            self.host = kwargs.pop("host")
         else:
             self.host = get_hostname()
         initialize(**kwargs)
@@ -47,14 +40,12 @@ class DatadogMetricsBackend(MetricsBackend):
         if self.tags:
             tags.update(self.tags)
         if instance:
-            tags['instance'] = instance
+            tags["instance"] = instance
         if tags:
-            tags = ['{}:{}'.format(*i) for i in tags.items()]
-        # datadog does not implement sampling here
-        amount = _sampled_value(amount, sample_rate)
-        self.stats.increment(self._get_key(key), amount,
-                             tags=tags,
-                             host=self.host)
+            tags = [u"{}:{}".format(*i) for i in tags.items()]
+        self.stats.increment(
+            self._get_key(key), amount, sample_rate=sample_rate, tags=tags, host=self.host
+        )
 
     def timing(self, key, value, instance=None, tags=None, sample_rate=1):
         if tags is None:
@@ -62,9 +53,9 @@ class DatadogMetricsBackend(MetricsBackend):
         if self.tags:
             tags.update(self.tags)
         if instance:
-            tags['instance'] = instance
+            tags["instance"] = instance
         if tags:
-            tags = ['{}:{}'.format(*i) for i in tags.items()]
-        self.stats.timing(self._get_key(key), value, sample_rate=sample_rate,
-                          tags=tags,
-                          host=self.host)
+            tags = [u"{}:{}".format(*i) for i in tags.items()]
+        self.stats.timing(
+            self._get_key(key), value, sample_rate=sample_rate, tags=tags, host=self.host
+        )

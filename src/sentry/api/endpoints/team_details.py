@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 
 import logging
+from uuid import uuid4
 
 from rest_framework import serializers, status
 from rest_framework.response import Response
@@ -13,43 +14,38 @@ from sentry.models import AuditLogEntryEvent, Team, TeamStatus
 from sentry.tasks.deletion import delete_team
 from sentry.utils.apidocs import scenario, attach_scenarios
 
+delete_logger = logging.getLogger("sentry.deletions.api")
 
-@scenario('GetTeam')
+
+@scenario("GetTeam")
 def get_team_scenario(runner):
-    runner.request(
-        method='GET',
-        path='/teams/%s/%s/' % (
-            runner.org.slug, runner.default_team.slug)
-    )
+    runner.request(method="GET", path="/teams/%s/%s/" % (runner.org.slug, runner.default_team.slug))
 
 
-@scenario('UpdateTeam')
+@scenario("UpdateTeam")
 def update_team_scenario(runner):
-    team = runner.utils.create_team('The Obese Philosophers', runner.org)
+    team = runner.utils.create_team("The Obese Philosophers", runner.org)
     runner.request(
-        method='PUT',
-        path='/teams/%s/%s/' % (
-            runner.org.slug, team.slug),
-        data={
-            'name': 'The Inflated Philosophers'
-        }
+        method="PUT",
+        path="/teams/%s/%s/" % (runner.org.slug, team.slug),
+        data={"name": "The Inflated Philosophers"},
     )
 
 
 class TeamSerializer(serializers.ModelSerializer):
+    slug = serializers.RegexField(r"^[a-z0-9_\-]+$", max_length=50)
+
     class Meta:
         model = Team
-        fields = ('name', 'slug')
+        fields = ("name", "slug")
 
-    def validate_slug(self, attrs, source):
-        value = attrs[source]
-        qs = Team.objects.filter(
-            slug=value,
-            organization=self.object.organization,
-        ).exclude(id=self.object.id)
+    def validate_slug(self, value):
+        qs = Team.objects.filter(slug=value, organization=self.instance.organization).exclude(
+            id=self.instance.id
+        )
         if qs.exists():
             raise serializers.ValidationError('The slug "%s" is already in use.' % (value,))
-        return attrs
+        return value
 
 
 class TeamDetailsEndpoint(TeamEndpoint):
@@ -69,7 +65,7 @@ class TeamDetailsEndpoint(TeamEndpoint):
         :auth: required
         """
         context = serialize(team, request.user)
-        context['organization'] = serialize(team.organization, request.user)
+        context["organization"] = serialize(team.organization, request.user)
 
         return Response(context)
 
@@ -90,7 +86,7 @@ class TeamDetailsEndpoint(TeamEndpoint):
                             and available.
         :auth: required
         """
-        serializer = TeamSerializer(team, data=request.DATA, partial=True)
+        serializer = TeamSerializer(team, data=request.data, partial=True)
         if serializer.is_valid():
             team = serializer.save()
 
@@ -118,16 +114,11 @@ class TeamDetailsEndpoint(TeamEndpoint):
         immediate.  However once deletion has begun the state of a project
         changes and will be hidden from most public views.
         """
-        logging.getLogger('sentry.deletions').info(
-            'Team %s/%s (id=%s) removal requested by user (id=%s)',
-            team.organization.slug, team.slug, team.id, request.user.id)
-
-        updated = Team.objects.filter(
-            id=team.id,
-            status=TeamStatus.VISIBLE,
-        ).update(status=TeamStatus.PENDING_DELETION)
+        updated = Team.objects.filter(id=team.id, status=TeamStatus.VISIBLE).update(
+            status=TeamStatus.PENDING_DELETION
+        )
         if updated:
-            delete_team.delay(object_id=team.id, countdown=3600)
+            transaction_id = uuid4().hex
 
             self.create_audit_entry(
                 request=request,
@@ -135,6 +126,18 @@ class TeamDetailsEndpoint(TeamEndpoint):
                 target_object=team.id,
                 event=AuditLogEntryEvent.TEAM_REMOVE,
                 data=team.get_audit_log_data(),
+                transaction_id=transaction_id,
+            )
+
+            delete_team.apply_async(kwargs={"object_id": team.id, "transaction_id": transaction_id})
+
+            delete_logger.info(
+                "object.delete.queued",
+                extra={
+                    "object_id": team.id,
+                    "transaction_id": transaction_id,
+                    "model": type(team).__name__,
+                },
             )
 
         return Response(status=204)

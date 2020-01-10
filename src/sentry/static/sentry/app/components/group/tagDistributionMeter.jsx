@@ -1,141 +1,94 @@
+import PropTypes from 'prop-types';
 import React from 'react';
-import {Link} from 'react-router';
-import ApiMixin from '../../mixins/apiMixin';
-import PropTypes from '../../proptypes';
-import TooltipMixin from '../../mixins/tooltip';
-import {escape, percent} from '../../utils';
-import {t} from '../../locale';
 
-const TagDistributionMeter = React.createClass({
-  propTypes: {
-    group: PropTypes.Group.isRequired,
-    tag: React.PropTypes.string.isRequired,
-    name: React.PropTypes.string,
-    orgId: React.PropTypes.string.isRequired,
-    projectId: React.PropTypes.string.isRequired
-  },
+import {deviceNameMapper, loadDeviceListModule} from 'app/components/deviceName';
+import SentryTypes from 'app/sentryTypes';
 
-  mixins: [
-    ApiMixin,
-    TooltipMixin({
-      html: true,
-      selector: '.segment',
-      container: 'body'
-    })
-  ],
+import TagDistributionMeter from 'app/components/tagDistributionMeter';
 
-  getInitialState() {
-    return {
-      loading: true,
-      error: false,
-      data: null
-    };
-  },
+class GroupTagDistributionMeter extends React.Component {
+  static propTypes = {
+    group: SentryTypes.Group.isRequired,
+    tag: PropTypes.string.isRequired,
+    name: PropTypes.string,
+    organization: SentryTypes.Organization.isRequired,
+    totalValues: PropTypes.number,
+    topValues: PropTypes.array,
+  };
+
+  state = {
+    loading: true,
+    error: false,
+  };
 
   componentWillMount() {
     this.fetchData();
-  },
+  }
 
-  fetchData() {
-    let url = '/issues/' + this.props.group.id + '/tags/' + encodeURIComponent(this.props.tag) + '/';
-
-    this.setState({
-      loading: true,
-      error: false
-    });
-
-    this.api.request(url, {
-      success: (data, _, jqXHR) => {
-        this.setState({
-          data: data,
-          error: false,
-          loading: false
-        });
-      },
-      error: () => {
-        this.setState({
-          error: true,
-          loading: false
-        });
-      }
-    });
-  },
-
-  /**
-   * Render segments of tag distribution
-   *
-   * e.g.
-   *
-   * .--------.-----.----------------.
-   * |  web-1 |web-2|     other      |
-   * `--------'-----'----------------'
-   */
-
-  renderSegments() {
-    let data = this.state.data;
-    let totalValues = data.totalValues;
-
-    let totalVisible = data.topValues.reduce((sum, value) => sum + value.count, 0);
-
-    let hasOther = totalVisible < totalValues;
-    let otherPct = percent(totalValues - totalVisible, totalValues);
-    let otherPctLabel = Math.floor(otherPct);
-
-    let {orgId, projectId} = this.props;
+  shouldComponentUpdate(nextProps, nextState) {
     return (
-      <div className="segments">
-        {data.topValues.map((value) => {
-          let pct = percent(value.count, totalValues);
-          let pctLabel = Math.floor(pct);
-
-          return (
-            <Link
-                key={value.id}
-                className="segment" style={{width: pct + '%'}}
-                to={`/${orgId}/${projectId}/issues/${this.props.group.id}/tags/${this.props.tag}/`}
-                title={'<div class="truncate">' + escape(value.name) + '</div>' + pctLabel + '%'}>
-              <span className="tag-description">
-                <span className="tag-percentage">{pctLabel}%</span>
-                <span className="tag-label">{value.name}</span>
-              </span>
-            </Link>
-          );
-        })}
-        {hasOther &&
-          <Link
-              key="other"
-              className="segment" style={{width: otherPct + '%'}}
-              to={`/${orgId}/${projectId}/issues/${this.props.group.id}/tags/${this.props.tag}/`}
-              title={'Other<br/>' + otherPctLabel + '%'}>
-            <span className="tag-description">
-              <span className="tag-percentage">{otherPctLabel}%</span>
-              <span className="tag-label">{t('Other')}</span>
-            </span>
-          </Link>
-        }
-      </div>
-    );
-  },
-
-  renderBody() {
-    if (this.state.loading || this.state.error)
-      return null;
-
-    if (!this.state.data.totalValues)
-      return <p>{t('No recent data.')}</p>;
-
-    return this.renderSegments();
-  },
-
-
-  render() {
-    return (
-      <div className="distribution-graph">
-        <h6><span>{this.props.name}</span></h6>
-        {this.renderBody()}
-      </div>
+      this.state.loading !== nextState.loading ||
+      this.state.error !== nextState.error ||
+      this.props.tag !== nextProps.tag ||
+      this.props.name !== nextProps.name ||
+      this.props.totalValues !== nextProps.totalValues ||
+      this.props.topValues !== nextProps.topValues
     );
   }
-});
 
-export default TagDistributionMeter;
+  fetchData() {
+    this.setState({
+      loading: true,
+      error: false,
+    });
+
+    loadDeviceListModule()
+      .then(iOSDeviceList => {
+        this.setState({
+          iOSDeviceList,
+          error: false,
+          loading: false,
+        });
+      })
+      .catch(() => {
+        this.setState({
+          error: true,
+          loading: false,
+        });
+      });
+  }
+
+  render() {
+    const {organization, group, tag, totalValues, topValues} = this.props;
+    const {loading, error} = this.state;
+
+    const url = `/organizations/${organization.slug}/issues/${group.id}/tags/${tag}/`;
+
+    let segments = [];
+
+    if (topValues) {
+      segments = this.state.iOSDeviceList
+        ? topValues.map(value => ({
+            ...value,
+            name: deviceNameMapper(value.name || '', this.state.iOSDeviceList) || '',
+            url,
+          }))
+        : topValues.map(value => ({
+            ...value,
+            url,
+          }));
+    }
+
+    return (
+      <TagDistributionMeter
+        title={tag}
+        totalValues={totalValues}
+        isLoading={loading}
+        hasError={error}
+        segments={segments}
+      />
+    );
+  }
+}
+
+export default GroupTagDistributionMeter;

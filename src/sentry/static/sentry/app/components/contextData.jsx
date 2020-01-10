@@ -1,17 +1,22 @@
+import PropTypes from 'prop-types';
 import React from 'react';
-import jQuery from 'jquery';
-import {isUrl} from '../utils';
+
+import isString from 'lodash/isString';
+import isNumber from 'lodash/isNumber';
+import isArray from 'lodash/isArray';
+
+import {isUrl} from 'app/utils';
 
 function looksLikeObjectRepr(value) {
-  let a = value[0];
-  let z = value[value.length - 1];
-  if (a == '<' && z == '>') {
+  const a = value[0];
+  const z = value[value.length - 1];
+  if (a === '<' && z === '>') {
     return true;
-  } else if (a == '[' && z == ']') {
+  } else if (a === '[' && z === ']') {
     return true;
-  } else if (a == '(' && z == ')') {
+  } else if (a === '(' && z === ')') {
     return true;
-  } else if (z == ')' && value.match(/^[\w\d._-]+\(/)) {
+  } else if (z === ')' && value.match(/^[\w\d._-]+\(/)) {
     return true;
   }
   return false;
@@ -45,11 +50,11 @@ function naturalCaseInsensitiveSort(a, b) {
 }
 
 function analyzeStringForRepr(value) {
-  let rv = {
+  const rv = {
     repr: value,
     isString: true,
     isMultiLine: false,
-    isStripped: false
+    isStripped: false,
   };
 
   // stripped for security reasons
@@ -67,54 +72,83 @@ function analyzeStringForRepr(value) {
   return rv;
 }
 
+class ToggleWrap extends React.Component {
+  static propTypes = {
+    highUp: PropTypes.bool,
+    wrapClassName: PropTypes.string,
+  };
 
-const ContextData = React.createClass({
-  propTypes: {
-    data: React.PropTypes.any
-  },
+  state = {toggled: false};
 
-  getDefaultProps() {
-    return {
-      data: null
-    };
-  },
-
-  renderValue(value) {
-    function toggle(evt) {
-      jQuery(evt.target).parent().toggleClass('val-toggle-open');
-      evt.preventDefault();
+  render() {
+    if (React.Children.count(this.props.children) === 0) {
+      return null;
     }
 
-    function makeToggle(highUp, childCount, children) {
-      if (childCount === 0) {
-        return null;
-      }
-      if (highUp) {
-        return children;
-      }
-      return (
-        <span className="val-toggle">
-          <a href="#" className="val-toggle-link" onClick={toggle}></a>
-          {children}
-        </span>
-      );
+    const {wrapClassName, children} = this.props;
+    const wrappedChildren = <span className={wrapClassName}>{children}</span>;
+
+    if (this.props.highUp) {
+      return wrappedChildren;
     }
+
+    const classes = ['val-toggle'];
+    if (this.state.toggled) {
+      classes.push('val-toggle-open');
+    }
+
+    return (
+      <span className={classes.join(' ')}>
+        <a
+          href="#"
+          className="val-toggle-link"
+          onClick={evt => {
+            this.setState(state => ({toggled: !state.toggled}));
+            evt.preventDefault();
+          }}
+        />
+        {wrappedChildren}
+      </span>
+    );
+  }
+}
+
+class ContextData extends React.Component {
+  static propTypes = {
+    data: PropTypes.any,
+    preserveQuotes: PropTypes.bool,
+  };
+
+  static defaultProps = {
+    data: null,
+  };
+
+  renderValue = value => {
+    const {preserveQuotes} = this.props;
 
     /*eslint no-shadow:0*/
     function walk(value, depth) {
-      let i = 0, children = [];
+      let i = 0;
+      const children = [];
       if (value === null) {
         return <span className="val-null">{'None'}</span>;
       } else if (value === true || value === false) {
         return <span className="val-bool">{value ? 'True' : 'False'}</span>;
-      } else if (typeof value === 'string' || value instanceof String) {
-        let valueInfo = analyzeStringForRepr(value);
+      } else if (isString(value)) {
+        const valueInfo = analyzeStringForRepr(value);
 
-        let out = [<span key="value" className={
-            (valueInfo.isString ? 'val-string' : 'val-repr') +
-            (valueInfo.isStripped ? ' val-stripped' : '') +
-            (valueInfo.isMultiLine ? ' val-string-multiline' : '')}>{
-              valueInfo.repr}</span>];
+        const out = [
+          <span
+            key="value"
+            className={
+              (valueInfo.isString ? 'val-string' : '') +
+              (valueInfo.isStripped ? ' val-stripped' : '') +
+              (valueInfo.isMultiLine ? ' val-string-multiline' : '')
+            }
+          >
+            {preserveQuotes ? `"${valueInfo.repr}"` : valueInfo.repr}
+          </span>,
+        ];
 
         if (valueInfo.isString && isUrl(value)) {
           out.push(
@@ -125,39 +159,46 @@ const ContextData = React.createClass({
         }
 
         return out;
-      } else if (typeof value === 'number' || value instanceof Number) {
-        return <span className="val-number">{value}</span>;
-      } else if (value instanceof Array) {
+      } else if (isNumber(value)) {
+        return <span>{value}</span>;
+      } else if (isArray(value)) {
         for (i = 0; i < value.length; i++) {
           children.push(
             <span className="val-array-item" key={i}>
               {walk(value[i], depth + 1)}
-              {i < value.length - 1 ? <span className="val-array-sep">{', '}</span> : null}
+              {i < value.length - 1 ? (
+                <span className="val-array-sep">{', '}</span>
+              ) : null}
             </span>
           );
         }
         return (
           <span className="val-array">
             <span className="val-array-marker">{'['}</span>
-            {makeToggle(depth <= 2, children.length,
-                        <span className="val-array-items">{children}</span>)}
+            <ToggleWrap highUp={depth <= 2} wrapClassName="val-array-items">
+              {children}
+            </ToggleWrap>
             <span className="val-array-marker">{']'}</span>
           </span>
         );
+      } else if (React.isValidElement(value)) {
+        return value;
       } else {
-        let keys = Object.keys(value);
+        const keys = Object.keys(value);
         keys.sort(naturalCaseInsensitiveSort);
         for (i = 0; i < keys.length; i++) {
-          let key = keys[i];
+          const key = keys[i];
           children.push(
             <span className="val-dict-pair" key={key}>
               <span className="val-dict-key">
-                <span className="val-string">{key}</span>
+                <span className="val-string">{preserveQuotes ? `"${key}"` : key}</span>
               </span>
               <span className="val-dict-col">{': '}</span>
               <span className="val-dict-value">
                 {walk(value[key], depth + 1)}
-                {i < keys.length - 1 ? <span className="val-dict-sep">{', '}</span> : null}
+                {i < keys.length - 1 ? (
+                  <span className="val-dict-sep">{', '}</span>
+                ) : null}
               </span>
             </span>
           );
@@ -165,40 +206,35 @@ const ContextData = React.createClass({
         return (
           <span className="val-dict">
             <span className="val-dict-marker">{'{'}</span>
-            {makeToggle(depth <= 1, children.length,
-                        <span className="val-dict-items">{children}</span>)}
+            <ToggleWrap highUp={depth <= 1} wrapClassName="val-dict-items">
+              {children}
+            </ToggleWrap>
             <span className="val-dict-marker">{'}'}</span>
           </span>
         );
       }
     }
     return walk(value, 0);
-  },
+  };
 
-  renderKeyPosValue(value) {
-    if (typeof value === 'string' || value instanceof String) {
+  renderKeyPosValue = value => {
+    if (isString(value)) {
       return <span className="val-string">{value}</span>;
     }
     return this.renderValue(value);
-  },
+  };
 
   render() {
-    // XXX(dcramer): babel does not support this yet
-    // let {data, className, ...other} = this.props;
-    let data = this.props.data;
-    let className = this.props.className;
-    let other = {};
-    for (let key in this.props) {
-      if (key !== 'data' && key !== 'className') {
-        other[key] = this.props[key];
-      }
-    }
-    other.className = 'val ' + (className || '');
+    const {data, preserveQuotes: _preserveQuotes, ...other} = this.props;
 
     return (
-      <pre {...other}>{this.renderValue(data)}</pre>
+      <pre className="val-string" {...other}>
+        {this.renderValue(data)}
+      </pre>
     );
   }
-});
+}
+
+ContextData.displayName = 'ContextData';
 
 export default ContextData;

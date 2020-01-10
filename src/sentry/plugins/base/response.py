@@ -1,16 +1,9 @@
-"""
-sentry.plugins.base.response
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2010-2013 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
 from __future__ import absolute_import, print_function
 
-__all__ = ('Response', 'JSONResponse')
+__all__ = ("Response", "JSONResponse")
 
-from django.core.context_processors import csrf
 from django.http import HttpResponse
+from django.template.context_processors import csrf
 
 from sentry.utils import json
 
@@ -38,8 +31,11 @@ class Response(object):
 
 
 class JSONResponse(Response):
-    def __init__(self, context):
+    def __init__(self, context, status=200):
         self.context = context
+        self.status = status
 
     def respond(self, request, context=None):
-        return HttpResponse(json.dumps(self.context), content_type='application/json')
+        return HttpResponse(
+            json.dumps(self.context), content_type="application/json", status=self.status
+        )

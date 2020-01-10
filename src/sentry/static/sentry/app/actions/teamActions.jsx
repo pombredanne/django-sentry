@@ -1,10 +1,22 @@
 import Reflux from 'reflux';
 
-let TeamActions = Reflux.createActions([
+const TeamActions = Reflux.createActions([
+  'createTeam',
+  'createTeamError',
+  'createTeamSuccess',
+  'fetchAll',
+  'fetchAllError',
+  'fetchAllSuccess',
+  'fetchDetails',
+  'fetchDetailsError',
+  'fetchDetailsSuccess',
+  'loadTeams',
+  'removeTeam',
+  'removeTeamError',
+  'removeTeamSuccess',
   'update',
   'updateError',
-  'updateSuccess'
+  'updateSuccess',
 ]);
-
 
 export default TeamActions;

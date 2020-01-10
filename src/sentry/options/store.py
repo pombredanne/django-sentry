@@ -1,42 +1,32 @@
-"""
-sentry.options.store
-~~~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2010-2015 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
 from __future__ import absolute_import, print_function
 
 import logging
+import six
+
 from collections import namedtuple
 from time import time
 from random import random
 
+from django.db.utils import ProgrammingError, OperationalError
 from django.utils import timezone
 from django.utils.functional import cached_property
-from sentry.db.models.query import create_or_update
-from sentry.utils.hashlib import md5
+from sentry.utils.hashlib import md5_text
 
+Key = namedtuple("Key", ("name", "default", "type", "flags", "ttl", "grace", "cache_key"))
 
-Key = namedtuple('Key', ('name', 'default', 'type', 'flags', 'ttl', 'grace', 'cache_key'))
+CACHE_FETCH_ERR = "Unable to fetch option cache for %s"
+CACHE_UPDATE_ERR = "Unable to update option cache for %s"
 
-CACHE_FETCH_ERR = 'Unable to fetch option cache for %s'
-CACHE_UPDATE_ERR = 'Unable to update option cache for %s'
-
-logger = logging.getLogger('sentry')
+logger = logging.getLogger("sentry")
 
 
 def _make_cache_key(key):
-    return 'o:%s' % md5(key).hexdigest()
+    return "o:%s" % md5_text(key).hexdigest()
 
 
 def _make_cache_value(key, value):
     now = int(time())
-    return (
-        value,
-        now + key.ttl,
-        now + key.ttl + key.grace,
-    )
+    return (value, now + key.ttl, now + key.ttl + key.grace)
 
 
 class OptionsStore(object):
@@ -59,6 +49,7 @@ class OptionsStore(object):
     @cached_property
     def model(self):
         from sentry.models.option import Option
+
         return Option
 
     def make_key(self, name, default, type, flags, ttl, grace):
@@ -97,11 +88,12 @@ class OptionsStore(object):
             value = self.cache.get(cache_key)
         except Exception:
             if not silent:
-                logger.warn(CACHE_FETCH_ERR, key.name, exc_info=True)
+                logger.warn(CACHE_FETCH_ERR, key.name, extra={"key": key.name}, exc_info=True)
             value = None
-        else:
-            if key.ttl > 0:
-                self._local_cache[cache_key] = _make_cache_value(key, value)
+
+        if value is not None and key.ttl > 0:
+            self._local_cache[cache_key] = _make_cache_value(key, value)
+
         return value
 
     def get_local_cache(self, key, force_grace=False):
@@ -163,11 +155,11 @@ class OptionsStore(object):
         """
         try:
             value = self.model.objects.get(key=key.name).value
-        except self.model.DoesNotExist:
+        except (self.model.DoesNotExist, ProgrammingError, OperationalError):
             value = None
-        except Exception as e:
+        except Exception:
             if not silent:
-                logger.exception(unicode(e))
+                logger.exception("option.failed-lookup", extra={"key": key.name})
             value = None
         else:
             # we only attempt to populate the cache if we were previously
@@ -178,7 +170,7 @@ class OptionsStore(object):
                 self.set_cache(key, value)
             except Exception:
                 if not silent:
-                    logger.warn(CACHE_UPDATE_ERR, key.name, exc_info=True)
+                    logger.warn(CACHE_UPDATE_ERR, key.name, extra={"key": key.name}, exc_info=True)
         return value
 
     def set(self, key, value):
@@ -188,19 +180,16 @@ class OptionsStore(object):
         If cache fails, we ignore silently since it'll get repaired later by sync_options.
         A boolean is returned to indicate if the network cache was set successfully.
         """
-        assert self.cache is not None, 'cache must be configured before mutating options'
+        assert self.cache is not None, "cache must be configured before mutating options"
 
         self.set_store(key, value)
         return self.set_cache(key, value)
 
     def set_store(self, key, value):
+        from sentry.db.models.query import create_or_update
+
         create_or_update(
-            model=self.model,
-            key=key.name,
-            values={
-                'value': value,
-                'last_updated': timezone.now(),
-            }
+            model=self.model, key=key.name, values={"value": value, "last_updated": timezone.now()}
         )
 
     def set_cache(self, key, value):
@@ -216,7 +205,7 @@ class OptionsStore(object):
             self.cache.set(cache_key, value, self.ttl)
             return True
         except Exception:
-            logger.warn(CACHE_UPDATE_ERR, key.name, exc_info=True)
+            logger.warn(CACHE_UPDATE_ERR, key.name, extra={"key": key.name}, exc_info=True)
             return False
 
     def delete(self, key):
@@ -226,7 +215,7 @@ class OptionsStore(object):
         If database succeeds, caches are then allowed to fail silently.
         A boolean is returned to indicate if the network deletion succeeds.
         """
-        assert self.cache is not None, 'cache must be configured before mutating options'
+        assert self.cache is not None, "cache must be configured before mutating options"
 
         self.delete_store(key)
         return self.delete_cache(key)
@@ -245,7 +234,7 @@ class OptionsStore(object):
             self.cache.delete(cache_key)
             return True
         except Exception:
-            logger.warn(CACHE_UPDATE_ERR, key.name, exc_info=True)
+            logger.warn(CACHE_UPDATE_ERR, key.name, extra={"key": key.name}, exc_info=True)
             return False
 
     def clean_local_cache(self):
@@ -257,7 +246,7 @@ class OptionsStore(object):
         now = int(time())
 
         try:
-            for k, (_, _, grace) in self._local_cache.iteritems():
+            for k, (_, _, grace) in six.iteritems(self._local_cache):
                 if now > grace:
                     to_expire.append(k)
         except RuntimeError:
@@ -297,5 +286,6 @@ class OptionsStore(object):
     def connect_signals(self):
         from celery.signals import task_postrun
         from django.core.signals import request_finished
+
         task_postrun.connect(self.maybe_clean_local_cache)
         request_finished.connect(self.maybe_clean_local_cache)

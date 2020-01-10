@@ -1,39 +1,35 @@
-"""
-sentry.testutils.skips
-~~~~~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
 from __future__ import absolute_import
 
+from django.conf import settings
+from six.moves.urllib.parse import urlparse
+import os
 import socket
 import pytest
 
 
-def riak_is_available():
+_service_status = {}
+
+
+def snuba_is_available():
+    if "snuba" in _service_status:
+        return _service_status["snuba"]
     try:
-        socket.create_connection(('127.0.0.1', 8098), 1.0)
+        parsed = urlparse(settings.SENTRY_SNUBA)
+        socket.create_connection((parsed.host, parsed.port), 1.0)
     except socket.error:
-        return False
+        _service_status["snuba"] = False
     else:
-        return True
+        _service_status["snuba"] = True
+    return _service_status["snuba"]
 
 
-requires_riak = pytest.mark.skipif(
-    not riak_is_available(),
-    reason="requires riak server running")
+requires_snuba = pytest.mark.skipif(not snuba_is_available, reason="requires snuba server running")
 
 
-def cassandra_is_available():
-    try:
-        socket.create_connection(('127.0.0.1', 9042), 1.0)
-    except socket.error:
-        return False
-    else:
-        return True
+def xfail_if_not_postgres(reason):
+    def decorator(function):
+        return pytest.mark.xfail(os.environ.get("TEST_SUITE") != "postgres", reason=reason)(
+            function
+        )
 
-
-requires_cassandra = pytest.mark.skipif(
-    not cassandra_is_available(),
-    reason="requires cassandra server running")
+    return decorator

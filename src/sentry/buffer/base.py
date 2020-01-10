@@ -1,28 +1,24 @@
-"""
-sentry.buffer.base
-~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
 from __future__ import absolute_import
 
 import logging
+import six
 
 from django.db.models import F
 
 from sentry.signals import buffer_incr_complete
 from sentry.tasks.process_buffer import process_incr
+from sentry.utils.services import Service
 
 
 class BufferMount(type):
     def __new__(cls, name, bases, attrs):
         new_cls = type.__new__(cls, name, bases, attrs)
-        new_cls.logger = logging.getLogger('sentry.buffer.%s' % (new_cls.__name__.lower(),))
+        new_cls.logger = logging.getLogger("sentry.buffer.%s" % (new_cls.__name__.lower(),))
         return new_cls
 
 
-class Buffer(object):
+@six.add_metaclass(BufferMount)
+class Buffer(Service):
     """
     Buffers act as temporary stores for counters. The default implementation is just a passthru and
     does not actually buffer anything.
@@ -35,39 +31,38 @@ class Buffer(object):
     This is useful in situations where a single event might be happening so fast that the queue cant
     keep up with the updates.
     """
-    __metaclass__ = BufferMount
+
+    __all__ = ("incr", "process", "process_pending", "validate")
 
     def incr(self, model, columns, filters, extra=None):
         """
         >>> incr(Group, columns={'times_seen': 1}, filters={'pk': group.pk})
         """
-        process_incr.apply_async(kwargs={
-            'model': model,
-            'columns': columns,
-            'filters': filters,
-            'extra': extra,
-        })
+        process_incr.apply_async(
+            kwargs={"model": model, "columns": columns, "filters": filters, "extra": extra}
+        )
 
-    def validate(self):
-        """
-        Validates the settings for this backend (i.e. such as proper connection
-        info).
-
-        Raise ``InvalidConfiguration`` if there is a configuration error.
-        """
-
-    def process_pending(self):
+    def process_pending(self, partition=None):
         return []
 
     def process(self, model, columns, filters, extra=None):
-        update_kwargs = dict((c, F(c) + v) for c, v in columns.iteritems())
+        from sentry.models import Group
+        from sentry.event_manager import ScoreClause
+
+        update_kwargs = dict((c, F(c) + v) for c, v in six.iteritems(columns))
         if extra:
             update_kwargs.update(extra)
 
-        _, created = model.objects.create_or_update(
-            values=update_kwargs,
-            **filters
-        )
+        # HACK(dcramer): this is gross, but we dont have a good hook to compute this property today
+        # XXX(dcramer): remove once we can replace 'priority' with something reasonable via Snuba
+        if model is Group and "last_seen" in update_kwargs and "times_seen" in update_kwargs:
+            update_kwargs["score"] = ScoreClause(
+                group=None,
+                times_seen=update_kwargs["times_seen"],
+                last_seen=update_kwargs["last_seen"],
+            )
+
+        _, created = model.objects.create_or_update(values=update_kwargs, **filters)
 
         buffer_incr_complete.send_robust(
             model=model,

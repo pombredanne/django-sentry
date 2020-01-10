@@ -1,56 +1,11 @@
-"""
-sentry.interfaces.breadcrumbs
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
-
 from __future__ import absolute_import
 
-__all__ = ('Breadcrumbs',)
+__all__ = ("Breadcrumbs",)
 
-import pytz
-from datetime import datetime
-
-from sentry.interfaces.base import Interface, InterfaceValidationError
-from sentry.utils.safe import trim
-from sentry.utils.dates import to_timestamp, to_datetime
-
-
-def parse_new_timestamp(value):
-    # TODO(mitsuhiko): merge this code with coreapis date parser
-    if isinstance(value, datetime):
-        return value
-    elif isinstance(value, (int, long, float)):
-        return datetime.utcfromtimestamp(value).replace(tzinfo=pytz.utc)
-    value = (value or '').rstrip('Z').encode('ascii', 'replace').split('.', 1)
-    if not value:
-        return None
-    try:
-        rv = datetime.strptime(value[0], '%Y-%m-%dT%H:%M:%S')
-    except Exception:
-        return None
-    if len(value) == 2:
-        try:
-            rv = rv.replace(microsecond=int(value[1]
-                            .ljust(6, '0')[:6]))
-        except ValueError:
-            rv = None
-    return rv.replace(tzinfo=pytz.utc)
-
-
-def _get_implied_category(category, type):
-    if category is not None:
-        return category
-    if type in ('critical', 'error', 'warning', 'info', 'debug'):
-        return type
-    # Common aliases
-    if type == 'warn':
-        return 'warning'
-    elif type == 'fatal':
-        return 'critical'
-    return 'info'
+from sentry.interfaces.base import Interface
+from sentry.utils.json import prune_empty_keys
+from sentry.utils.safe import get_path
+from sentry.utils.dates import to_timestamp, to_datetime, parse_timestamp
 
 
 class Breadcrumbs(Interface):
@@ -68,67 +23,70 @@ class Breadcrumbs(Interface):
     >>>     }
     >>> ], ...}
     """
+
     display_score = 1100
     score = 800
 
     @classmethod
     def to_python(cls, data):
         values = []
-        for crumb in data.get('values') or ():
+        for index, crumb in enumerate(get_path(data, "values", filter=True, default=())):
+            # TODO(ja): Handle already invalid and None breadcrumbs
             values.append(cls.normalize_crumb(crumb))
+
         return cls(values=values)
+
+    def to_json(self):
+        return prune_empty_keys(
+            {
+                "values": [
+                    prune_empty_keys(
+                        {
+                            "type": crumb["type"],
+                            "level": crumb["level"],
+                            "timestamp": crumb["timestamp"],
+                            "message": crumb["message"],
+                            "category": crumb["category"],
+                            "event_id": crumb["event_id"],
+                            "data": crumb["data"] or None,
+                        }
+                    )
+                    for crumb in self.values
+                ]
+                or None
+            }
+        )
 
     @classmethod
     def normalize_crumb(cls, crumb):
-        ty = crumb.get('type') or 'default'
-        ts = parse_new_timestamp(crumb.get('timestamp'))
-        if ts is None:
-            raise InterfaceValidationError('Unable to determine timestamp '
-                                           'for crumb')
+        crumb = dict(crumb)
+        ts = parse_timestamp(crumb.get("timestamp"))
+        if ts:
+            crumb["timestamp"] = to_timestamp(ts)
+        else:
+            crumb["timestamp"] = None
 
-        rv = {
-            'type': ty,
-            'timestamp': to_timestamp(ts),
-        }
+        for key in ("type", "level", "message", "category", "event_id", "data"):
+            crumb.setdefault(key, None)
 
-        level = crumb.get('level')
-        if level not in (None, 'info'):
-            rv['level'] = level
+        return crumb
 
-        msg = crumb.get('message')
-        if msg is not None:
-            rv['message'] = trim(unicode(msg), 4096)
-
-        category = crumb.get('category')
-        if category is not None:
-            rv['category'] = trim(unicode(category), 256)
-
-        event_id = crumb.get('event_id')
-        if event_id is not None:
-            rv['event_id'] = event_id
-
-        if 'data' in crumb:
-            rv['data'] = trim(crumb['data'], 4096)
-
-        return rv
-
-    def get_path(self):
-        return 'sentry.interfaces.Breadcrumbs'
-
-    def get_alias(self):
-        return 'breadcrumbs'
-
-    def get_api_context(self, is_public=False):
+    def get_api_context(self, is_public=False, platform=None):
         def _convert(x):
             return {
-                'type': x['type'],
-                'timestamp': to_datetime(x['timestamp']),
-                'level': x.get('level', 'info'),
-                'message': x.get('message'),
-                'category': x.get('category'),
-                'data': x.get('data') or None,
-                'event_id': x.get('event_id'),
+                "type": x["type"],
+                "timestamp": x["timestamp"] and to_datetime(x["timestamp"]),
+                "level": x.get("level", "info"),
+                "message": x.get("message"),
+                "category": x.get("category"),
+                "data": x.get("data") or None,
+                "event_id": x.get("event_id"),
             }
-        return {
-            'values': map(_convert, self.values),
-        }
+
+        return {"values": [_convert(v) for v in self.values]}
+
+    def get_api_meta(self, meta, is_public=False, platform=None):
+        if meta and "values" not in meta:
+            return {"values": meta}
+        else:
+            return meta

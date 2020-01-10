@@ -1,11 +1,3 @@
-"""
-sentry.tasks.process_buffer
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-:copyright: (c) 2010-2014 by the Sentry Team, see AUTHORS for more details.
-:license: BSD, see LICENSE for more details.
-"""
-
 from __future__ import absolute_import
 
 import logging
@@ -13,31 +5,38 @@ import logging
 from sentry.tasks.base import instrumented_task
 from sentry.utils.locking import UnableToAcquireLock
 
-
 logger = logging.getLogger(__name__)
 
 
 @instrumented_task(
-    name='sentry.tasks.process_buffer.process_pending')
-def process_pending():
+    name="sentry.tasks.process_buffer.process_pending", queue="buffers.process_pending"
+)
+def process_pending(partition=None):
     """
     Process pending buffers.
     """
-    from sentry import app
-    lock = app.locks.get('buffer:process_pending', duration=60)
+    from sentry import buffer
+    from sentry.app import locks
+
+    if partition is None:
+        lock_key = "buffer:process_pending"
+    else:
+        lock_key = "buffer:process_pending:%d" % partition
+
+    lock = locks.get(lock_key, duration=60)
+
     try:
         with lock.acquire():
-            app.buffer.process_pending()
+            buffer.process_pending(partition=partition)
     except UnableToAcquireLock as error:
-        logger.warning('Failed to process pending buffers due to error: %s', error)
+        logger.warning("process_pending.fail", extra={"error": error, "partition": partition})
 
 
-@instrumented_task(
-    name='sentry.tasks.process_buffer.process_incr')
+@instrumented_task(name="sentry.tasks.process_buffer.process_incr")
 def process_incr(**kwargs):
     """
     Processes a buffer event.
     """
-    from sentry import app
+    from sentry import buffer
 
-    app.buffer.process(**kwargs)
+    buffer.process(**kwargs)

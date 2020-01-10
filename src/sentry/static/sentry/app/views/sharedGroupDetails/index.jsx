@@ -1,31 +1,34 @@
-import React from 'react';
-import jQuery from 'jquery';
+import PropTypes from 'prop-types';
 import DocumentTitle from 'react-document-title';
+import React from 'react';
+import createReactClass from 'create-react-class';
 
-import ApiMixin from '../../mixins/apiMixin';
-import EventEntries from '../../components/events/eventEntries';
-import Footer from '../../components/footer';
-import Header from '../../components/header';
-import LoadingError from '../../components/loadingError';
-import LoadingIndicator from '../../components/loadingIndicator';
-import PropTypes from '../../proptypes';
+import {t} from 'app/locale';
+import withApi from 'app/utils/withApi';
+import EventEntries from 'app/components/events/eventEntries';
+import Footer from 'app/components/footer';
+import LoadingError from 'app/components/loadingError';
+import LoadingIndicator from 'app/components/loadingIndicator';
+import NotFound from 'app/components/errors/notFound';
+import SentryTypes from 'app/sentryTypes';
+import SharedGroupHeader from 'app/views/sharedGroupDetails/sharedGroupHeader';
 
-import SharedGroupHeader from './sharedGroupHeader';
+const SharedGroupDetails = createReactClass({
+  displayName: 'SharedGroupDetails',
 
-const SharedGroupDetails = React.createClass({
-  childContextTypes: {
-    group: PropTypes.Group,
+  propTypes: {
+    api: PropTypes.object,
   },
 
-  mixins: [
-    ApiMixin
-  ],
+  childContextTypes: {
+    group: SentryTypes.Group,
+  },
 
   getInitialState() {
     return {
       group: null,
       loading: true,
-      error: false
+      error: false,
     };
   },
 
@@ -37,78 +40,106 @@ const SharedGroupDetails = React.createClass({
 
   componentWillMount() {
     this.fetchData();
-    jQuery(document.body).addClass('shared-group');
+    document.body.classList.add('shared-group');
   },
 
   componentWillUnmount() {
-    jQuery(document.body).removeClass('shared-group');
+    document.body.classList.remove('shared-group');
   },
 
   getTitle() {
-    if (this.state.group)
+    if (this.state.group) {
       return this.state.group.title;
+    }
     return 'Sentry';
   },
 
   fetchData() {
     this.setState({
       loading: true,
-      error: false
+      error: false,
     });
 
-    this.api.request(this.getGroupDetailsEndpoint(), {
-      success: (data) => {
+    this.props.api.request(this.getGroupDetailsEndpoint(), {
+      success: data => {
         this.setState({
           loading: false,
-          group: data
+          group: data,
         });
-      }, error: () => {
+      },
+      error: () => {
         this.setState({
           loading: false,
-          error: true
+          error: true,
         });
-      }
+      },
     });
   },
 
   getGroupDetailsEndpoint() {
-    let id = this.props.params.shareId;
+    const id = this.props.params.shareId;
 
     return '/shared/issues/' + id + '/';
   },
 
   render() {
-    let group = this.state.group;
+    const group = this.state.group;
 
-    if (this.state.loading || !group)
+    if (this.state.loading) {
       return <LoadingIndicator />;
-    else if (this.state.error)
-      return <LoadingError onRetry={this.fetchData} />;
+    }
 
-    let evt = this.state.group.latestEvent;
+    if (!group) {
+      return <NotFound />;
+    }
+
+    if (this.state.error) {
+      return <LoadingError onRetry={this.fetchData} />;
+    }
+
+    const evt = this.state.group.latestEvent;
 
     return (
       <DocumentTitle title={this.getTitle()}>
         <div className="app">
-          <Header />
+          <div className="pattern-bg" />
           <div className="container">
-            <div className="content">
-              <SharedGroupHeader group={group} />
-              <div className="group-overview">
-                <EventEntries
-                  group={group}
-                  event={evt}
-                  orgId={group.project.organization.slug}
-                  project={group.project}
-                  isShare={true} />
+            <div className="box box-modal">
+              <div className="box-header">
+                <a className="logo" href="/">
+                  <span className="icon-sentry-logo-full" />
+                </a>
+                {this.state.group.permalink && (
+                  <a className="details" href={this.state.group.permalink}>
+                    {t('Details')}
+                  </a>
+                )}
+              </div>
+              <div className="box-content">
+                <div className="content">
+                  <SharedGroupHeader group={group} />
+                  <div className="group-overview event-details-container">
+                    <div className="primary">
+                      <EventEntries
+                        group={group}
+                        event={evt}
+                        orgId={group.project.organization.slug}
+                        project={group.project}
+                        isShare
+                      />
+                    </div>
+                  </div>
+                  <Footer />
+                </div>
               </div>
             </div>
           </div>
-          <Footer />
         </div>
       </DocumentTitle>
     );
-  }
+  },
 });
 
-export default SharedGroupDetails;
+export {SharedGroupDetails};
+
+export default withApi(SharedGroupDetails);

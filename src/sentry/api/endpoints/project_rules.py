@@ -6,7 +6,8 @@ from rest_framework.response import Response
 from sentry.api.bases.project import ProjectEndpoint
 from sentry.api.serializers import serialize
 from sentry.api.serializers.rest_framework import RuleSerializer
-from sentry.models import Rule
+from sentry.models import AuditLogEntryEvent, Rule, RuleStatus
+from sentry.signals import alert_rule_created
 
 
 class ProjectRulesEndpoint(ProjectEndpoint):
@@ -20,13 +21,13 @@ class ProjectRulesEndpoint(ProjectEndpoint):
 
         """
         queryset = Rule.objects.filter(
-            project=project,
-        )
+            project=project, status__in=[RuleStatus.ACTIVE, RuleStatus.INACTIVE]
+        ).select_related("project")
 
         return self.paginate(
             request=request,
             queryset=queryset,
-            order_by='-id',
+            order_by="-id",
             on_results=lambda x: serialize(x, request.user),
         )
 
@@ -45,13 +46,20 @@ class ProjectRulesEndpoint(ProjectEndpoint):
             }}
 
         """
-        serializer = RuleSerializer(
-            context={'project': project},
-            data=request.DATA,
-        )
+        serializer = RuleSerializer(context={"project": project}, data=request.data)
 
         if serializer.is_valid():
             rule = serializer.save(rule=Rule())
+            self.create_audit_entry(
+                request=request,
+                organization=project.organization,
+                target_object=rule.id,
+                event=AuditLogEntryEvent.RULE_ADD,
+                data=rule.get_audit_log_data(),
+            )
+            alert_rule_created.send_robust(
+                user=request.user, project=project, rule=rule, sender=self
+            )
 
             return Response(serialize(rule, request.user))
 

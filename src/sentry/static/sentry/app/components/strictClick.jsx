@@ -1,5 +1,5 @@
+import PropTypes from 'prop-types';
 import React from 'react';
-import PureRenderMixin from 'react-addons-pure-render-mixin';
 
 /**
  * Usage:
@@ -7,42 +7,37 @@ import PureRenderMixin from 'react-addons-pure-render-mixin';
  *     <button>Some button</button>
  *   </StrictClick>
  */
-const StrictClick = React.createClass({
-  propTypes: {
-    onClick: React.PropTypes.func
-  },
+class StrictClick extends React.PureComponent {
+  static propTypes = {
+    onClick: PropTypes.func,
+  };
 
-  mixins: [
-    PureRenderMixin
-  ],
+  static MAX_DELTA_X = 10;
+  static MAX_DELTA_Y = 10;
 
-  statics: {
-    MAX_DELTA_X: 10,
-    MAX_DELTA_Y: 10
-  },
-
-  getInitialState() {
-    return {
-      startCoords: null
+  constructor(...args) {
+    super(...args);
+    this.state = {
+      startCoords: null,
     };
-  },
+  }
 
-  handleMouseDown: function(evt) {
+  handleMouseDown = evt => {
     this.setState({
       startCoords: {
         x: evt.screenX,
-        y: evt.screenY
-      }
+        y: evt.screenY,
+      },
     });
-  },
+  };
 
-  handleMouseClick: function(evt) {
+  handleMouseClick = evt => {
     // Click happens if mouse down/up in same element - click will
     // not fire if either initial mouse down OR final ouse up occurs in
     // different element
-    let {startCoords} = this.state;
-    let deltaX = Math.abs(evt.screenX - startCoords.x);
-    let deltaY = Math.abs(evt.screenY - startCoords.y);
+    const {startCoords} = this.state;
+    const deltaX = Math.abs(evt.screenX - startCoords.x);
+    const deltaY = Math.abs(evt.screenY - startCoords.y);
 
     // If mouse hasn't moved more than 10 pixels in either Y
     // or X direction, fire onClick
@@ -50,20 +45,21 @@ const StrictClick = React.createClass({
       this.props.onClick(evt);
     }
     this.setState({
-      startCoords: null
+      startCoords: null,
     });
-  },
+  };
 
   render() {
     // Bail out early if there is no onClick handler
-    if (!this.props.onClick) return this.props.children;
+    if (!this.props.onClick) {
+      return this.props.children;
+    }
 
     return React.cloneElement(this.props.children, {
       onMouseDown: this.handleMouseDown,
-      onClick: this.handleMouseClick
+      onClick: this.handleMouseClick,
     });
   }
-});
+}
 
 export default StrictClick;
-
